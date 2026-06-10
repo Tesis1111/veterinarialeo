@@ -3,6 +3,14 @@ import { useAuth } from "../../context/AuthContext";
 import { useAudit } from "../../context/AuditContext";
 import { Pet, Client, PetOwnershipChange } from "../../types";
 import { initialPets, initialClients } from "../../data/mockData";
+import {
+  traerMascotas,
+  registrarMascota,
+  modificarMascota,
+  eliminarMascota,
+  ValidarUnicidadMascota,
+} from "../../services/mascotaService";
+import { traerClientes } from "../../services/clienteService";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -82,29 +90,27 @@ export default function PetsModuleEnhanced() {
   });
 
   useEffect(() => {
-    const savedPets = localStorage.getItem("veterinaria_pets");
-    const savedClients = localStorage.getItem("veterinaria_clients");
-    const loadedPets = savedPets ? JSON.parse(savedPets) : initialPets;
-
-    // Migrar datos antiguos si es necesario
-    const migratedPets = loadedPets.map((pet: any) => ({
-      ...pet,
-      deceased: pet.deceased || false,
-      ownershipHistory: pet.ownershipHistory || [],
-      // Mantener compatibilidad con el formato antiguo
-      species: pet.species,
-      race: pet.race
-    }));
-
-    setPets(migratedPets);
-    setClients(savedClients ? JSON.parse(savedClients) : initialClients);
+    traerMascotas().then(loaded => {
+      const migrated = loaded.map((pet: any) => ({
+        ...pet,
+        deceased: pet.deceased || false,
+        ownershipHistory: pet.ownershipHistory || [],
+      }));
+      setPets(migrated);
+    }).catch(() => {
+      const savedPets = localStorage.getItem("veterinaria_pets");
+      const loadedPets = savedPets ? JSON.parse(savedPets) : initialPets;
+      setPets(loadedPets.map((pet: any) => ({
+        ...pet,
+        deceased: pet.deceased || false,
+        ownershipHistory: pet.ownershipHistory || [],
+      })));
+    });
+    traerClientes().then(setClients).catch(() => {
+      const savedClients = localStorage.getItem("veterinaria_clients");
+      setClients(savedClients ? JSON.parse(savedClients) : initialClients);
+    });
   }, []);
-
-  useEffect(() => {
-    if (pets.length > 0) {
-      localStorage.setItem("veterinaria_pets", JSON.stringify(pets));
-    }
-  }, [pets]);
 
   const calculateAge = (birthDate: Date | undefined): string => {
     if (!birthDate) return "-";
@@ -205,75 +211,73 @@ export default function PetsModuleEnhanced() {
     });
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.name || !formData.speciesId || !formData.sex || !formData.clientId) {
       toast.error("Por favor, complete todos los campos obligatorios");
       return;
     }
 
-    if (isEditing && selectedPet) {
-      const previousClientId = selectedPet.clientId;
-      const clientChanged = previousClientId !== formData.clientId;
-
-      setPets(prev =>
-        prev.map(pet => {
-          if (pet.id === selectedPet.id) {
-            const updated: any = {
-              ...pet,
-              ...formData,
-              // Mantener compatibilidad
-              species: getSpeciesName(formData.speciesId),
-              race: getBreedName(formData.breedId),
-              observations: formData.colorObservations,
-              colorObservations: formData.colorObservations,
-              updatedAt: new Date()
-            };
-
-            // Si cambió el dueño, registrar en el historial
-            if (clientChanged) {
-              const ownershipChange: PetOwnershipChange = {
-                id: Date.now().toString(),
-                petId: pet.id,
-                previousClientId,
-                previousClientName: getClientName(previousClientId),
-                newClientId: formData.clientId,
-                newClientName: getClientName(formData.clientId),
-                changeDate: new Date(),
-                reason: `Actualización manual del dueño`,
-                recordedBy: user?.id || "1"
-              };
-              updated.ownershipHistory = [...(pet.ownershipHistory || []), ownershipChange];
-              addLog("Actualizar", "Mascotas", `Cambio de dueño: ${pet.name} → ${getClientName(formData.clientId)}`);
-            }
-
-            return updated;
-          }
-          return pet;
-        })
-      );
-      toast.success("Mascota actualizada exitosamente");
-      addLog("Actualizar", "Mascotas", `Mascota ${formData.name} actualizada`);
-    } else {
-      const newPet: any = {
-        id: Date.now().toString(),
-        ...formData,
-        // Compatibilidad
-        species: getSpeciesName(formData.speciesId),
-        race: getBreedName(formData.breedId),
-        observations: formData.colorObservations,
-        colorObservations: formData.colorObservations,
-        deceased: false,
-        ownershipHistory: [],
-        deleted: false,
-        createdAt: new Date(),
-        createdBy: user?.id || "1"
-      };
-      setPets(prev => [...prev, newPet]);
-      toast.success("Mascota registrada exitosamente");
-      addLog("Crear", "Mascotas", `Mascota ${formData.name} registrada`);
+    // ValidarUnicidadMascota — Gestor Alta Mascota
+    const isUnique = await ValidarUnicidadMascota(formData.name, formData.clientId, selectedPet?.id);
+    if (!isUnique) {
+      toast.error("Ya existe una mascota con ese nombre para este cliente");
+      return;
     }
 
-    handleCancel();
+    try {
+      if (isEditing && selectedPet) {
+        const previousClientId = selectedPet.clientId;
+        const clientChanged = previousClientId !== formData.clientId;
+
+        const patchData: any = {
+          ...formData,
+          species: getSpeciesName(formData.speciesId),
+          race: getBreedName(formData.breedId),
+          observations: formData.colorObservations,
+          colorObservations: formData.colorObservations,
+        };
+
+        if (clientChanged) {
+          const ownershipChange: PetOwnershipChange = {
+            id: Date.now().toString(),
+            petId: selectedPet.id,
+            previousClientId,
+            previousClientName: getClientName(previousClientId),
+            newClientId: formData.clientId,
+            newClientName: getClientName(formData.clientId),
+            changeDate: new Date(),
+            reason: "Actualización manual del dueño",
+            recordedBy: user?.id || "1"
+          };
+          patchData.ownershipHistory = [...(selectedPet.ownershipHistory || []), ownershipChange];
+          addLog("Actualizar", "Mascotas", `Cambio de dueño: ${selectedPet.name} → ${getClientName(formData.clientId)}`);
+        }
+
+        const updated = await modificarMascota(selectedPet.id, patchData, user?.id || "1");
+        setPets(prev => prev.map(p => p.id === selectedPet.id ? { ...p, ...updated } : p));
+        toast.success("Mascota actualizada exitosamente");
+        addLog("Actualizar", "Mascotas", `Mascota ${formData.name} actualizada`);
+      } else {
+        const petData: any = {
+          name: formData.name,
+          breedId: formData.breedId || formData.speciesId,
+          sex: formData.sex as Pet["sex"],
+          clientId: formData.clientId,
+          birthDate: formData.birthDate ? formData.birthDate.toISOString() : undefined,
+          color: formData.colorObservations,
+          observations: formData.colorObservations,
+          species: getSpeciesName(formData.speciesId),
+          race: getBreedName(formData.breedId),
+        };
+        const newPet = await registrarMascota(petData, user?.id || "1");
+        setPets(prev => [...prev, { ...newPet, ownershipHistory: [] } as any]);
+        toast.success("Mascota registrada exitosamente");
+        addLog("Crear", "Mascotas", `Mascota ${formData.name} registrada`);
+      }
+      handleCancel();
+    } catch {
+      toast.error("Error al guardar la mascota. Intente nuevamente.");
+    }
   };
 
   const handleCancel = () => {
@@ -292,41 +296,47 @@ export default function PetsModuleEnhanced() {
     setActiveTab("list");
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (selectedPet) {
-      setPets(prev => prev.map(p => p.id === selectedPet.id ? { ...p, deleted: true, deletedAt: new Date(), deletedBy: user?.id || "1" } : p));
-      toast.success("Mascota eliminada exitosamente");
-      addLog("Eliminar", "Mascotas", `Mascota ${selectedPet.name} eliminada`);
-      handleCancel();
+      try {
+        await eliminarMascota(selectedPet.id, user?.id || "1");
+        setPets(prev => prev.filter(p => p.id !== selectedPet.id));
+        toast.success("Mascota eliminada exitosamente");
+        addLog("Eliminar", "Mascotas", `Mascota ${selectedPet.name} eliminada`);
+        handleCancel();
+      } catch {
+        toast.error("Error al eliminar la mascota.");
+      }
       setDeleteDialogOpen(false);
     }
   };
 
-  const handleMarkAsDeceased = () => {
+  const handleMarkAsDeceased = async () => {
     if (!selectedPet) return;
     if (!deceasedForm.deceasedReason.trim()) {
       toast.error("Por favor indique el motivo del fallecimiento");
       return;
     }
 
-    setPets(prev =>
-      prev.map(pet =>
-        pet.id === selectedPet.id
-          ? {
-              ...pet,
-              deceased: true,
-              deceasedDate: deceasedForm.deceasedDate,
-              deceasedReason: deceasedForm.deceasedReason,
-              deceasedNotes: deceasedForm.deceasedNotes,
-              updatedAt: new Date(),
-              updatedBy: user?.id || "1"
-            }
-          : pet
-      )
-    );
+    try {
+      // Use mascotaService.marcarFallecida via direct patch
+      const updated = await modificarMascota(
+        selectedPet.id,
+        {
+          deceased: true,
+          deceasedDate: deceasedForm.deceasedDate,
+          deceasedReason: deceasedForm.deceasedReason,
+          deceasedNotes: deceasedForm.deceasedNotes,
+        } as any,
+        user?.id || "1"
+      );
+      setPets(prev => prev.map(p => p.id === selectedPet.id ? { ...p, ...updated } : p));
+      toast.success(`${selectedPet.name} ha sido marcado/a como fallecido/a`);
+      addLog("Actualizar", "Mascotas", `Mascota ${selectedPet.name} marcada como fallecida`);
+    } catch {
+      toast.error("Error al actualizar el estado de la mascota.");
+    }
 
-    toast.success(`${selectedPet.name} ha sido marcado/a como fallecido/a`);
-    addLog("Actualizar", "Mascotas", `Mascota ${selectedPet.name} marcada como fallecida`);
     setDeceasedDialogOpen(false);
     setDeceasedForm({ deceasedDate: new Date(), deceasedReason: "", deceasedNotes: "" });
     setSelectedPet(null);

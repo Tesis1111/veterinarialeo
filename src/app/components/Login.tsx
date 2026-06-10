@@ -1,4 +1,4 @@
-import { useState, ReactNode } from "react";
+import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useAudit } from "../context/AuditContext";
 import { Button } from "./ui/button";
@@ -10,11 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Dog, Lock, User, AlertCircle, Shield, Stethoscope, UserCheck, Mail, KeyRound, Send, CheckCircle } from "lucide-react";
 import { toast } from "sonner@2.0.3";
 
-interface LoginProps {
-  children: ReactNode;
-}
-
-export default function Login({ children }: LoginProps) {
+export default function Login() {
   const { user, login, users } = useAuth();
   const { addLog } = useAudit();
   const [username, setUsername] = useState("");
@@ -28,7 +24,7 @@ export default function Login({ children }: LoginProps) {
   const [recoveryError, setRecoveryError] = useState("");
   const [recoverySuccess, setRecoverySuccess] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
@@ -37,7 +33,7 @@ export default function Login({ children }: LoginProps) {
       return;
     }
 
-    const success = login(username, password);
+    const success = await login(username, password);
     if (!success) {
       setError("Credenciales inválidas. Por favor, intente nuevamente.");
     }

@@ -1,5 +1,11 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { AuditLog } from "../types";
+import {
+  registrarAuditoria,
+  traerAuditoria,
+  traerAuditoriaPorModulo,
+  traerAuditoriaPorUsuario,
+} from "../services/auditoriaService";
 
 interface AuditContextType {
   logs: AuditLog[];
@@ -15,46 +21,49 @@ export function AuditProvider({ children }: { children: ReactNode }) {
   const [logs, setLogs] = useState<AuditLog[]>([]);
 
   useEffect(() => {
-    const savedLogs = localStorage.getItem("veterinaria_audit_logs");
-    if (savedLogs) {
-      setLogs(JSON.parse(savedLogs));
-    }
+    traerAuditoria(500)
+      .then(setLogs)
+      .catch(() => {
+        try {
+          const saved = localStorage.getItem("veterinaria_audit_logs");
+          if (saved) setLogs(JSON.parse(saved));
+        } catch {
+          // ignore
+        }
+      });
   }, []);
 
-  useEffect(() => {
-    if (logs.length > 0) {
-      localStorage.setItem("veterinaria_audit_logs", JSON.stringify(logs));
-    }
-  }, [logs]);
-
   const addLog = (action: string, module: string, details: string) => {
-    const userStr = localStorage.getItem("veterinaria_user");
-    if (!userStr) return;
+    try {
+      const userStr = localStorage.getItem("veterinaria_user");
+      if (!userStr) return;
+      const user = JSON.parse(userStr);
 
-    const user = JSON.parse(userStr);
+      const partial: Omit<AuditLog, "id" | "timestamp"> = {
+        userId: user.id,
+        userName: user.fullName,
+        userRole: user.roleName ?? user.roleId ?? "",
+        action: action as AuditLog["action"],
+        module: module as AuditLog["module"],
+        details,
+        ipAddress: "127.0.0.1",
+      };
 
-    const newLog: AuditLog = {
-      id: Date.now().toString(),
-      userId: user.id,
-      userName: user.fullName,
-      userRole: user.role,
-      action,
-      module,
-      details,
-      timestamp: new Date(),
-      ipAddress: "127.0.0.1"
-    };
-
-    setLogs(prev => [newLog, ...prev].slice(0, 1000));
+      registrarAuditoria(partial).then((newLog) => {
+        setLogs((prev) => [newLog, ...prev].slice(0, 1000));
+      });
+    } catch {
+      // ignore
+    }
   };
 
   const getLogs = () => logs;
 
-  const getLogsByModule = (module: string) => 
-    logs.filter(log => log.module === module);
+  const getLogsByModule = (module: string) =>
+    logs.filter((log) => log.module === module);
 
-  const getLogsByUser = (userId: string) => 
-    logs.filter(log => log.userId === userId);
+  const getLogsByUser = (userId: string) =>
+    logs.filter((log) => log.userId === userId);
 
   return (
     <AuditContext.Provider value={{ logs, addLog, getLogs, getLogsByModule, getLogsByUser }}>
@@ -70,3 +79,5 @@ export function useAudit() {
   }
   return context;
 }
+
+export { traerAuditoriaPorModulo, traerAuditoriaPorUsuario };

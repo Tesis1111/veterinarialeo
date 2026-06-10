@@ -38,13 +38,13 @@ export default function UserProfile({ setActiveModule }: UserProfileProps) {
 
   if (!user) return null;
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.fullName || !formData.email) {
       toast.error("Nombre y email son obligatorios");
       return;
     }
 
-    updateUser({
+    await updateUser({
       fullName: formData.fullName,
       email: formData.email,
       phone: formData.phone
@@ -236,7 +236,7 @@ export default function UserProfile({ setActiveModule }: UserProfileProps) {
               </div>
             ) : (
               <div className="space-y-2">
-                {user.permissions.map(permission => (
+                {(user.permissions ?? []).map(permission => (
                   <div
                     key={permission}
                     className="flex items-center gap-2 p-2 bg-orange-50 rounded border border-orange-100"
@@ -270,7 +270,7 @@ export default function UserProfile({ setActiveModule }: UserProfileProps) {
             </div>
             <div className="p-3 md:p-4 bg-orange-50 rounded-lg">
               <p className="text-sm text-gray-600 mb-1">Total de Permisos</p>
-              <p className="text-gray-800">{user.permissions.length}</p>
+              <p className="text-gray-800">{(user.permissions ?? []).length}</p>
             </div>
           </div>
         </CardContent>

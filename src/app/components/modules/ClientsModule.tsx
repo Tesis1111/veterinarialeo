@@ -2,6 +2,14 @@ import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { Client, Pet } from "../../types";
 import { initialClients, initialPets } from "../../data/mockData";
+import {
+  traerClientes,
+  registrarCliente,
+  asociarCliente,
+  eliminarCliente,
+  ValidarUnicidadCliente,
+} from "../../services/clienteService";
+import { traerMascotas } from "../../services/mascotaService";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -51,23 +59,23 @@ export default function ClientsModule() {
   });
 
   useEffect(() => {
-    const saved = localStorage.getItem("veterinaria_clients");
-    setClients(saved ? JSON.parse(saved) : initialClients);
-    const savedPets = localStorage.getItem("veterinaria_pets");
-    setPets(savedPets ? JSON.parse(savedPets) : initialPets);
+    traerClientes().then(setClients).catch(() => {
+      const saved = localStorage.getItem("veterinaria_clients");
+      setClients(saved ? JSON.parse(saved) : initialClients);
+    });
+    traerMascotas().then(setPets).catch(() => {
+      const savedPets = localStorage.getItem("veterinaria_pets");
+      setPets(savedPets ? JSON.parse(savedPets) : initialPets);
+    });
   }, []);
-
-  useEffect(() => {
-    if (clients.length > 0) {
-      localStorage.setItem("veterinaria_clients", JSON.stringify(clients));
-    }
-  }, [clients]);
 
   const filteredClients = useMemo(() => {
     return clients.filter(client =>
-      client.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      client.dniCuit.includes(searchTerm) ||
-      client.phone.includes(searchTerm)
+      !client.deleted && (
+        client.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        client.dniCuit.includes(searchTerm) ||
+        client.phone.includes(searchTerm)
+      )
     );
   }, [clients, searchTerm]);
 
@@ -122,7 +130,7 @@ export default function ClientsModule() {
     });
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const newErrors = {
       fullName: !formData.fullName ? "Nombre completo es obligatorio" : "",
       dniCuit: validateDniCuit(formData.dniCuit),
@@ -138,27 +146,28 @@ export default function ClientsModule() {
       return;
     }
 
-    if (isEditing && selectedClient) {
-      setClients(prev =>
-        prev.map(client =>
-          client.id === selectedClient.id
-            ? { ...client, ...formData }
-            : client
-        )
-      );
-      toast.success("Cliente actualizado exitosamente");
-    } else {
-      const newClient: Client = {
-        id: Date.now().toString(),
-        ...formData,
-        createdAt: new Date(),
-        createdBy: user?.id || "1"
-      };
-      setClients(prev => [...prev, newClient]);
-      toast.success("Cliente registrado exitosamente");
+    // ValidarUnicidadCliente — Gestor Alta/Modificar Cliente
+    const isUnique = await ValidarUnicidadCliente(formData.dniCuit, selectedClient?.id);
+    if (!isUnique) {
+      setErrors(prev => ({ ...prev, dniCuit: "Ya existe un cliente con ese DNI/CUIT" }));
+      toast.error("El DNI/CUIT ya está registrado");
+      return;
     }
 
-    handleCancel();
+    try {
+      if (isEditing && selectedClient) {
+        const updated = await asociarCliente(selectedClient.id, formData, user?.id || "1");
+        setClients(prev => prev.map(c => c.id === selectedClient.id ? updated : c));
+        toast.success("Cliente actualizado exitosamente");
+      } else {
+        const newClient = await registrarCliente(formData, user?.id || "1");
+        setClients(prev => [...prev, newClient]);
+        toast.success("Cliente registrado exitosamente");
+      }
+      handleCancel();
+    } catch {
+      toast.error("Error al guardar el cliente. Intente nuevamente.");
+    }
   };
 
   const handleCancel = () => {
@@ -182,11 +191,16 @@ export default function ClientsModule() {
     setActiveTab("list");
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (selectedClient) {
-      setClients(prev => prev.filter(client => client.id !== selectedClient.id));
-      toast.success("Cliente eliminado exitosamente");
-      handleCancel();
+      try {
+        await eliminarCliente(selectedClient.id, user?.id || "1");
+        setClients(prev => prev.filter(client => client.id !== selectedClient.id));
+        toast.success("Cliente eliminado exitosamente");
+        handleCancel();
+      } catch {
+        toast.error("Error al eliminar el cliente.");
+      }
       setDeleteDialogOpen(false);
     }
   };

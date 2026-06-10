@@ -2,6 +2,19 @@ import { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { User, Doctor, DoctorSchedule } from "../../types";
 import { doctors as initialDoctors } from "../../data/mockData";
+import {
+  traerUsuarios,
+  registrarUsuario,
+  modificarUsuario,
+  desactivarUsuario,
+  validarUnicidadUsuario,
+} from "../../services/usuarioService";
+import {
+  traerTodosLosHorarios,
+  registrarHorario,
+  desactivarHorario,
+  validarHorario,
+} from "../../services/horarioService";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -109,23 +122,7 @@ export default function UsersModule() {
   const { user: currentUser, isAdmin } = useAuth();
 
   // ── Estado usuarios ──────────────────────────────────────
-  const [users, setUsers] = useState<User[]>([
-    {
-      id: "1", username: "admin", password: "admin123", fullName: "Administrador Principal",
-      role: "admin", email: "admin@veterinaria.com", phone: "+54 11 1234-5678",
-      active: true, permissions: getPermissionsForRole("admin"), createdAt: new Date(2020, 0, 1)
-    } as any,
-    {
-      id: "2", username: "veterinario", password: "vet123", fullName: "Dra. María Fernández",
-      role: "veterinario", email: "veterinario@veterinaria.com", phone: "+54 11 2345-6789",
-      active: true, permissions: getPermissionsForRole("veterinario"), createdAt: new Date(2021, 0, 1)
-    } as any,
-    {
-      id: "3", username: "recepcionista", password: "rec123", fullName: "Juan Pérez",
-      role: "recepcionista", email: "recepcionista@veterinaria.com", phone: "+54 11 9876-5432",
-      active: true, permissions: getPermissionsForRole("recepcionista"), createdAt: new Date(2021, 6, 1)
-    } as any,
-  ]);
+  const [users, setUsers] = useState<User[]>([]);
 
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -147,23 +144,16 @@ export default function UsersModule() {
     dayOfWeek: 1, startTime: "09:00", endTime: "17:00", active: true,
   });
 
-  // ── Persistencia ──────────────────────────────────────
+  // ── Carga inicial ──────────────────────────────────────
   useEffect(() => {
-    const savedSchedules = localStorage.getItem("veterinaria_doctor_schedules");
+    traerUsuarios().then(setUsers).catch(() => {});
+    traerTodosLosHorarios().then(setSchedules).catch(() => {
+      const saved = localStorage.getItem("veterinaria_doctor_schedules");
+      setSchedules(saved ? JSON.parse(saved) : []);
+    });
     const savedDoctors = localStorage.getItem("veterinaria_doctors");
-    setSchedules(savedSchedules ? JSON.parse(savedSchedules) : []);
     setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem("veterinaria_doctor_schedules", JSON.stringify(schedules));
-  }, [schedules]);
-
-  useEffect(() => {
-    if (doctors.length > 0) {
-      localStorage.setItem("veterinaria_doctors", JSON.stringify(doctors));
-    }
-  }, [doctors]);
 
   if (!isAdmin) {
     return (
@@ -214,39 +204,63 @@ export default function UsersModule() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const handleSaveUser = () => {
-    if (!formData.username || !formData.password || !formData.fullName || !formData.email) {
+  const handleSaveUser = async () => {
+    if (!formData.username || !formData.fullName || !formData.email) {
       toast.error("Complete todos los campos obligatorios");
       return;
     }
-    const permissions = getPermissionsForRole(formData.role);
 
-    if (isEditing && selectedUser) {
-      setUsers(prev => prev.map(u =>
-        u.id === selectedUser.id ? { ...u, ...formData, permissions, updatedAt: new Date() } : u
-      ));
-      toast.success("Usuario actualizado exitosamente");
-    } else {
-      const newUserId = Date.now().toString();
-      const newUser: any = { id: newUserId, ...formData, permissions, createdAt: new Date() };
-      setUsers(prev => [...prev, newUser]);
-
-      if (needsSchedule(formData.role)) {
-        const newDoctor: Doctor = {
-          id: `doc_${newUserId}`,
-          userId: newUserId,
-          name: formData.fullName,
-          specialty: formData.role === "veterinario" ? "Medicina General" : "Peluquería",
-          available: true,
-          createdAt: new Date(),
-        };
-        setDoctors(prev => [...prev, newDoctor]);
-        toast.success("Usuario creado y perfil de profesional generado");
-      } else {
-        toast.success("Usuario creado exitosamente");
-      }
+    // validarUnicidadUsuario — Gestor Usuarios y Permisos
+    const uniqueCheck = await validarUnicidadUsuario(formData.username, formData.email, selectedUser?.id);
+    if (!uniqueCheck.valid) {
+      toast.error(uniqueCheck.errors[0]?.message || "El usuario o email ya están en uso");
+      return;
     }
-    handleCancelUser();
+
+    try {
+      if (isEditing && selectedUser) {
+        const updated = await modificarUsuario(selectedUser.id, {
+          username: formData.username,
+          fullName: formData.fullName,
+          email: formData.email,
+          phone: formData.phone,
+          active: formData.active,
+          roleId: formData.role,
+        }, currentUser?.id || "1");
+        setUsers(prev => prev.map(u => u.id === selectedUser.id ? updated : u));
+        toast.success("Usuario actualizado exitosamente");
+      } else {
+        if (!formData.password) { toast.error("La contraseña es obligatoria"); return; }
+        const newUser = await registrarUsuario({
+          username: formData.username,
+          password: formData.password,
+          fullName: formData.fullName,
+          email: formData.email,
+          phone: formData.phone,
+          active: formData.active,
+          roleId: formData.role,
+        }, currentUser?.id || "1");
+        setUsers(prev => [...prev, newUser]);
+
+        if (needsSchedule(formData.role)) {
+          const newDoctor: Doctor = {
+            id: `doc_${newUser.id}`,
+            userId: newUser.id,
+            name: formData.fullName,
+            specialty: formData.role === "veterinario" ? "Medicina General" : "Peluquería",
+            available: true,
+            createdAt: new Date(),
+          };
+          setDoctors(prev => [...prev, newDoctor]);
+          toast.success("Usuario creado y perfil de profesional generado");
+        } else {
+          toast.success("Usuario creado exitosamente");
+        }
+      }
+      handleCancelUser();
+    } catch (err: any) {
+      toast.error(err?.message || "Error al guardar el usuario. Intente nuevamente.");
+    }
   };
 
   const handleCancelUser = () => {
@@ -257,49 +271,57 @@ export default function UsersModule() {
   };
 
   // ── Horarios: acciones ──────────────────────────────────────
-  const handleAddSchedule = () => {
+  const handleAddSchedule = async () => {
     if (!selectedDoctorId) {
       toast.error("Seleccione un profesional primero");
       return;
     }
-    if (scheduleForm.startTime >= scheduleForm.endTime) {
-      toast.error("La hora de inicio debe ser anterior a la hora de fin");
+    // validarHorario — Gestor Alta Horario
+    const validation = await validarHorario(
+      selectedDoctorId,
+      scheduleForm.dayOfWeek,
+      scheduleForm.startTime,
+      scheduleForm.endTime
+    );
+    if (!validation.valid) {
+      toast.error(validation.errors[0]?.message || "Error en la validación del horario");
       return;
     }
-    const hasConflict = schedules
-      .filter(s => s.doctorId === selectedDoctorId && s.dayOfWeek === scheduleForm.dayOfWeek && s.active)
-      .some(s =>
-        (scheduleForm.startTime >= s.startTime && scheduleForm.startTime < s.endTime) ||
-        (scheduleForm.endTime > s.startTime && scheduleForm.endTime <= s.endTime) ||
-        (scheduleForm.startTime <= s.startTime && scheduleForm.endTime >= s.endTime)
+
+    try {
+      const newSchedule = await registrarHorario(
+        selectedDoctorId,
+        scheduleForm.dayOfWeek,
+        scheduleForm.startTime,
+        scheduleForm.endTime
       );
-    if (hasConflict) {
-      toast.error("Ya existe un horario en ese día y rango horario");
-      return;
+      setSchedules(prev => [...prev, newSchedule]);
+      toast.success("Horario agregado exitosamente");
+      setScheduleForm({ dayOfWeek: 1, startTime: "09:00", endTime: "17:00", active: true });
+    } catch {
+      toast.error("Error al guardar el horario.");
     }
-    const newSchedule: DoctorSchedule = {
-      id: Date.now().toString(),
-      doctorId: selectedDoctorId,
-      dayOfWeek: scheduleForm.dayOfWeek,
-      startTime: scheduleForm.startTime,
-      endTime: scheduleForm.endTime,
-      active: scheduleForm.active,
-      createdAt: new Date(),
-    };
-    setSchedules(prev => [...prev, newSchedule]);
-    toast.success("Horario agregado exitosamente");
-    setScheduleForm({ dayOfWeek: 1, startTime: "09:00", endTime: "17:00", active: true });
   };
 
-  const handleToggleSchedule = (id: string) => {
+  const handleToggleSchedule = async (id: string) => {
+    const schedule = schedules.find(s => s.id === id);
+    if (!schedule) return;
+    if (schedule.active) {
+      await desactivarHorario(id).catch(() => {});
+    }
     setSchedules(prev => prev.map(s => s.id === id ? { ...s, active: !s.active } : s));
     toast.success("Estado del horario actualizado");
   };
 
-  const handleDeleteSchedule = () => {
+  const handleDeleteSchedule = async () => {
     if (selectedSchedule) {
-      setSchedules(prev => prev.filter(s => s.id !== selectedSchedule.id));
-      toast.success("Horario eliminado");
+      try {
+        await desactivarHorario(selectedSchedule.id);
+        setSchedules(prev => prev.filter(s => s.id !== selectedSchedule.id));
+        toast.success("Horario eliminado");
+      } catch {
+        toast.error("Error al eliminar el horario.");
+      }
       setDeleteScheduleDialogOpen(false);
       setSelectedSchedule(null);
     }

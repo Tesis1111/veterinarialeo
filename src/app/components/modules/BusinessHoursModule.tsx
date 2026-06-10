@@ -2,6 +2,12 @@ import { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { Doctor, DoctorSchedule } from "../../types";
 import { doctors as initialDoctors } from "../../data/mockData";
+import {
+  traerTodosLosHorarios,
+  registrarHorario,
+  desactivarHorario,
+  validarHorario,
+} from "../../services/horarioService";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
@@ -43,21 +49,13 @@ export default function BusinessHoursModule() {
   });
 
   useEffect(() => {
-    const savedSchedules = localStorage.getItem("veterinaria_doctor_schedules");
+    traerTodosLosHorarios().then(setSchedules).catch(() => {
+      const saved = localStorage.getItem("veterinaria_doctor_schedules");
+      setSchedules(saved ? JSON.parse(saved) : []);
+    });
     const savedDoctors = localStorage.getItem("veterinaria_doctors");
-    setSchedules(savedSchedules ? JSON.parse(savedSchedules) : []);
     setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem("veterinaria_doctor_schedules", JSON.stringify(schedules));
-  }, [schedules]);
-
-  useEffect(() => {
-    if (doctors.length > 0) {
-      localStorage.setItem("veterinaria_doctors", JSON.stringify(doctors));
-    }
-  }, [doctors]);
 
   if (!isAdmin) {
     return (
@@ -86,49 +84,56 @@ export default function BusinessHoursModule() {
       return a.startTime.localeCompare(b.startTime);
     });
 
-  const handleAddSchedule = () => {
+  const handleAddSchedule = async () => {
     if (!selectedDoctorId) {
       toast.error("Seleccione un profesional primero");
       return;
     }
-    if (scheduleForm.startTime >= scheduleForm.endTime) {
-      toast.error("La hora de inicio debe ser anterior a la hora de fin");
+    // validarHorario — Gestor Alta Horario
+    const validation = await validarHorario(
+      selectedDoctorId,
+      scheduleForm.dayOfWeek,
+      scheduleForm.startTime,
+      scheduleForm.endTime
+    );
+    if (!validation.valid) {
+      toast.error(validation.errors[0]?.message || "Error en la validación del horario");
       return;
     }
-    const hasConflict = schedules
-      .filter(s => s.doctorId === selectedDoctorId && s.dayOfWeek === scheduleForm.dayOfWeek && s.active)
-      .some(s =>
-        (scheduleForm.startTime >= s.startTime && scheduleForm.startTime < s.endTime) ||
-        (scheduleForm.endTime > s.startTime && scheduleForm.endTime <= s.endTime) ||
-        (scheduleForm.startTime <= s.startTime && scheduleForm.endTime >= s.endTime)
+
+    try {
+      const newSchedule = await registrarHorario(
+        selectedDoctorId,
+        scheduleForm.dayOfWeek,
+        scheduleForm.startTime,
+        scheduleForm.endTime
       );
-    if (hasConflict) {
-      toast.error("Ya existe un horario en ese día y rango horario");
-      return;
+      setSchedules(prev => [...prev, newSchedule]);
+      toast.success("Horario agregado exitosamente");
+      setScheduleForm({ dayOfWeek: 1, startTime: "09:00", endTime: "17:00", active: true });
+    } catch {
+      toast.error("Error al guardar el horario.");
     }
-    const newSchedule: DoctorSchedule = {
-      id: Date.now().toString(),
-      doctorId: selectedDoctorId,
-      dayOfWeek: scheduleForm.dayOfWeek,
-      startTime: scheduleForm.startTime,
-      endTime: scheduleForm.endTime,
-      active: scheduleForm.active,
-      createdAt: new Date(),
-    };
-    setSchedules(prev => [...prev, newSchedule]);
-    toast.success("Horario agregado exitosamente");
-    setScheduleForm({ dayOfWeek: 1, startTime: "09:00", endTime: "17:00", active: true });
   };
 
-  const handleToggleSchedule = (id: string) => {
+  const handleToggleSchedule = async (id: string) => {
+    const schedule = schedules.find(s => s.id === id);
+    if (schedule?.active) {
+      await desactivarHorario(id).catch(() => {});
+    }
     setSchedules(prev => prev.map(s => s.id === id ? { ...s, active: !s.active } : s));
     toast.success("Estado del horario actualizado");
   };
 
-  const handleDeleteSchedule = () => {
+  const handleDeleteSchedule = async () => {
     if (selectedSchedule) {
-      setSchedules(prev => prev.filter(s => s.id !== selectedSchedule.id));
-      toast.success("Horario eliminado");
+      try {
+        await desactivarHorario(selectedSchedule.id);
+        setSchedules(prev => prev.filter(s => s.id !== selectedSchedule.id));
+        toast.success("Horario eliminado");
+      } catch {
+        toast.error("Error al eliminar el horario.");
+      }
       setDeleteScheduleDialogOpen(false);
       setSelectedSchedule(null);
     }

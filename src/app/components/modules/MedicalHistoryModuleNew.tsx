@@ -3,6 +3,15 @@ import { useAuth } from "../../context/AuthContext";
 import { useAudit } from "../../context/AuditContext";
 import { MedicalRecord, Client, Pet, MedicalAttachment } from "../../types";
 import { initialMedicalRecords, initialClients, initialPets, doctors } from "../../data/mockData";
+import {
+  traerHistorial,
+  traerTodosLosHistoriales,
+  registrarHistorial,
+  eliminarHistorial,
+  validarTamañoFormato,
+} from "../../services/historialService";
+import { traerClientes } from "../../services/clienteService";
+import { traerMascotas } from "../../services/mascotaService";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -81,19 +90,19 @@ export default function MedicalHistoryModule() {
   });
 
   useEffect(() => {
-    const savedRecords = localStorage.getItem("veterinaria_medical_records");
-    const savedClients = localStorage.getItem("veterinaria_clients");
-    const savedPets = localStorage.getItem("veterinaria_pets");
-    setRecords(savedRecords ? JSON.parse(savedRecords) : initialMedicalRecords);
-    setClients(savedClients ? JSON.parse(savedClients) : initialClients);
-    setPets(savedPets ? JSON.parse(savedPets) : initialPets);
+    traerTodosLosHistoriales().then(setRecords).catch(() => {
+      const saved = localStorage.getItem("veterinaria_medical_records");
+      setRecords(saved ? JSON.parse(saved) : initialMedicalRecords);
+    });
+    traerClientes().then(setClients).catch(() => {
+      const saved = localStorage.getItem("veterinaria_clients");
+      setClients(saved ? JSON.parse(saved) : initialClients);
+    });
+    traerMascotas().then(setPets).catch(() => {
+      const saved = localStorage.getItem("veterinaria_pets");
+      setPets(saved ? JSON.parse(saved) : initialPets);
+    });
   }, []);
-
-  useEffect(() => {
-    if (records.length > 0) {
-      localStorage.setItem("veterinaria_medical_records", JSON.stringify(records));
-    }
-  }, [records]);
 
   // ── Helpers ──────────────────────────────────────
   const getClientName = (clientId: string) =>
@@ -192,7 +201,7 @@ export default function MedicalHistoryModule() {
   };
 
   // ── Guardar registro ──────────────────────────────────────
-  const handleRegister = () => {
+  const handleRegister = async () => {
     if (!selectedClientId || !selectedPetId || !addForm.eventType || !addForm.professionalId || !addForm.description.trim()) {
       toast.error("Complete los campos obligatorios: Tipo de evento, Profesional y Descripción");
       return;
@@ -209,30 +218,32 @@ export default function MedicalHistoryModule() {
     // Guardar el dueño vigente al momento del registro
     const currentOwner = clients.find(c => c.id === selectedClientId);
 
-    const newRecord = {
-      id: Date.now().toString(),
-      petId: selectedPetId,
-      date: addForm.date,
-      eventType: addForm.eventType,
-      description: addForm.description,
-      professionalId: addForm.professionalId,
-      weight: addForm.weight ? parseFloat(addForm.weight) : undefined,
-      temperature: addForm.temperature ? parseFloat(addForm.temperature) : undefined,
-      diagnosis: addForm.diagnosis || undefined,
-      treatment: addForm.treatment || undefined,
-      medication: addForm.medication || undefined,
-      notes: addForm.notes || undefined,
-      // Guardar dueño vigente al momento del registro
-      clientIdAtTime: selectedClientId,
-      clientNameAtTime: currentOwner?.fullName || "Desconocido",
-      attachments: uploadedFiles.length > 0 ? uploadedFiles : undefined,
-      createdAt: new Date(),
-      createdBy: user?.id || "1",
-      deleted: false,
-    } as any;
+    try {
+      const formDataPayload: any = {
+        petId: selectedPetId,
+        date: addForm.date.toISOString(),
+        eventType: addForm.eventType,
+        description: addForm.description,
+        professionalId: addForm.professionalId,
+        weight: addForm.weight ? parseFloat(addForm.weight) : undefined,
+        temperature: addForm.temperature ? parseFloat(addForm.temperature) : undefined,
+        diagnosis: addForm.diagnosis || undefined,
+        treatment: addForm.treatment || undefined,
+        medication: addForm.medication || undefined,
+        notes: addForm.notes || undefined,
+      };
 
-    setRecords(prev => [...prev, newRecord]);
-    addLog("Crear", "Historial Clínico", `Registro clínico agregado para ${getPetName(selectedPetId)}`);
+      // registrarHistorial — Gestor Alta Historial
+      const newRecord = await registrarHistorial(
+        formDataPayload,
+        user?.id || "1",
+        selectedClientId,
+        currentOwner?.fullName || "Desconocido",
+        uploadedFiles.length > 0 ? uploadedFiles : []
+      );
+
+      setRecords(prev => [...prev, newRecord]);
+      addLog("Crear", "Historial Clínico", `Registro clínico agregado para ${getPetName(selectedPetId)}`);
     toast.success("Registro agregado al historial clínico");
 
     // Enviar email si se seleccionó
@@ -251,8 +262,11 @@ export default function MedicalHistoryModule() {
       }
     }
 
-    resetForm();
-    setActiveTab("consult");
+      resetForm();
+      setActiveTab("consult");
+    } catch {
+      toast.error("Error al guardar el registro. Intente nuevamente.");
+    }
   };
 
   // ── Exportar CSV ──────────────────────────────────────

@@ -3,6 +3,15 @@ import { useAuth } from "../../context/AuthContext";
 import { useAudit } from "../../context/AuditContext";
 import { Appointment, Client, Pet, AppointmentType, AppointmentStatus, Doctor, DoctorSchedule } from "../../types";
 import { initialAppointments, initialClients, initialPets, doctors as initialDoctors } from "../../data/mockData";
+import {
+  traerTurnos,
+  registrarTurno,
+  modificarTurno,
+  cancelarTurno,
+} from "../../services/turnoService";
+import { traerClientes } from "../../services/clienteService";
+import { traerMascotas } from "../../services/mascotaService";
+import { traerTodosLosHorarios } from "../../services/horarioService";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -67,23 +76,25 @@ export default function AppointmentsModule() {
   });
 
   useEffect(() => {
-    const savedAppointments = localStorage.getItem("veterinaria_appointments");
-    const savedClients = localStorage.getItem("veterinaria_clients");
-    const savedPets = localStorage.getItem("veterinaria_pets");
+    traerTurnos().then(setAppointments).catch(() => {
+      const saved = localStorage.getItem("veterinaria_appointments");
+      setAppointments(saved ? JSON.parse(saved) : initialAppointments);
+    });
+    traerClientes().then(setClients).catch(() => {
+      const saved = localStorage.getItem("veterinaria_clients");
+      setClients(saved ? JSON.parse(saved) : initialClients);
+    });
+    traerMascotas().then(setPets).catch(() => {
+      const saved = localStorage.getItem("veterinaria_pets");
+      setPets(saved ? JSON.parse(saved) : initialPets);
+    });
+    traerTodosLosHorarios().then(setDoctorSchedules).catch(() => {
+      const saved = localStorage.getItem("veterinaria_doctor_schedules");
+      setDoctorSchedules(saved ? JSON.parse(saved) : []);
+    });
     const savedDoctors = localStorage.getItem("veterinaria_doctors");
-    const savedSchedules = localStorage.getItem("veterinaria_doctor_schedules");
-    setAppointments(savedAppointments ? JSON.parse(savedAppointments) : initialAppointments);
-    setClients(savedClients ? JSON.parse(savedClients) : initialClients);
-    setPets(savedPets ? JSON.parse(savedPets) : initialPets);
     setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
-    setDoctorSchedules(savedSchedules ? JSON.parse(savedSchedules) : []);
   }, []);
-
-  useEffect(() => {
-    if (appointments.length > 0) {
-      localStorage.setItem("veterinaria_appointments", JSON.stringify(appointments));
-    }
-  }, [appointments]);
 
   // ── Helpers ──────────────────────────────────────
   const getClientName = (clientId: string) => clients.find(c => c.id === clientId)?.fullName || "";
@@ -186,19 +197,23 @@ export default function AppointmentsModule() {
   };
 
   // ── Cambiar estado ──────────────────────────────────────
-  const handleStatusChange = (appointmentId: string, newStatus: AppointmentStatus) => {
+  const handleStatusChange = async (appointmentId: string, newStatus: AppointmentStatus) => {
     const appointment = appointments.find(apt => apt.id === appointmentId);
     if (!appointment) return;
 
-    if (newStatus === "completed") {
-      // Al completar: remover de la lista automáticamente
-      setAppointments(prev => prev.filter(apt => apt.id !== appointmentId));
-      toast.success("✓ Turno marcado como completado y removido de la agenda");
-      addLog("Actualizar", "Turnos", `Turno completado para ${getPetName(appointment.petId)}`);
-    } else {
-      setAppointments(prev => prev.map(apt => apt.id === appointmentId ? { ...apt, status: newStatus } : apt));
-      toast.success(`Estado actualizado a ${getStatusLabel(newStatus)}`);
-      addLog("Actualizar", "Turnos", `Turno de ${getPetName(appointment.petId)} → ${getStatusLabel(newStatus)}`);
+    try {
+      await modificarTurno(appointmentId, { status: newStatus }, user?.id || "1");
+      if (newStatus === "Completado") {
+        setAppointments(prev => prev.filter(apt => apt.id !== appointmentId));
+        toast.success("✓ Turno marcado como completado y removido de la agenda");
+        addLog("Actualizar", "Turnos", `Turno completado para ${getPetName(appointment.petId)}`);
+      } else {
+        setAppointments(prev => prev.map(apt => apt.id === appointmentId ? { ...apt, status: newStatus } : apt));
+        toast.success(`Estado actualizado a ${newStatus}`);
+        addLog("Actualizar", "Turnos", `Turno de ${getPetName(appointment.petId)} → ${newStatus}`);
+      }
+    } catch {
+      toast.error("Error al actualizar el estado del turno.");
     }
   };
 
@@ -256,7 +271,7 @@ export default function AppointmentsModule() {
   };
 
   // ── Guardar ──────────────────────────────────────
-  const handleSave = () => {
+  const handleSave = async () => {
     const validation = validateAppointmentFields(
       formData.type, formData.clientId, formData.petId, formData.reason,
       formData.doctorId, formData.startTime, formData.dateFrom, formData.dateTo
@@ -284,28 +299,34 @@ export default function AppointmentsModule() {
     const calcEndTime = (start: string) =>
       `${parseInt(start.split(':')[0])}:${(parseInt(start.split(':')[1]) + 30).toString().padStart(2, '0')}`;
 
-    if (isEditing && selectedAppointment) {
-      setAppointments(prev => prev.map(apt =>
-        apt.id === selectedAppointment.id
-          ? { ...apt, ...formData, endTime: formData.startTime ? calcEndTime(formData.startTime) : undefined, updatedAt: new Date(), updatedBy: user?.id }
-          : apt
-      ));
-      toast.success("Turno actualizado exitosamente");
-      addLog("Actualizar", "Turnos", `Turno actualizado para ${getPetName(formData.petId)}`);
-    } else {
-      const newApt: Appointment = {
-        id: Date.now().toString(),
-        ...formData,
-        status: "confirmed" as AppointmentStatus, // Siempre confirmado al crear
-        endTime: formData.startTime ? calcEndTime(formData.startTime) : undefined,
-        createdAt: new Date(),
-        createdBy: user?.id || "1"
-      };
-      setAppointments(prev => [...prev, newApt]);
-      toast.success("✓ Turno agendado y confirmado automáticamente");
-      addLog("Crear", "Turnos", `Turno creado para ${getPetName(formData.petId)} — ${getClientName(formData.clientId)}`);
+    try {
+      if (isEditing && selectedAppointment) {
+        const patch: any = {
+          ...formData,
+          endTime: formData.startTime ? calcEndTime(formData.startTime) : undefined,
+          date: formData.date.toISOString().split("T")[0],
+        };
+        const updated = await modificarTurno(selectedAppointment.id, patch, user?.id || "1");
+        setAppointments(prev => prev.map(apt => apt.id === selectedAppointment.id ? updated : apt));
+        toast.success("Turno actualizado exitosamente");
+        addLog("Actualizar", "Turnos", `Turno actualizado para ${getPetName(formData.petId)}`);
+      } else {
+        const aptData: any = {
+          ...formData,
+          date: formData.date.toISOString().split("T")[0],
+          status: "Confirmado" as AppointmentStatus,
+          endTime: formData.startTime ? calcEndTime(formData.startTime) : "",
+          serviceId: formData.type || "clinic",
+        };
+        const newApt = await registrarTurno(aptData, user?.id || "1");
+        setAppointments(prev => [...prev, newApt]);
+        toast.success("✓ Turno agendado y confirmado automáticamente");
+        addLog("Crear", "Turnos", `Turno creado para ${getPetName(formData.petId)} — ${getClientName(formData.clientId)}`);
+      }
+      handleCancel();
+    } catch {
+      toast.error("Error al guardar el turno. Intente nuevamente.");
     }
-    handleCancel();
   };
 
   const handleCancel = () => {
@@ -332,13 +353,18 @@ export default function AppointmentsModule() {
     });
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (selectedAppointment) {
-      setAppointments(prev => prev.filter(apt => apt.id !== selectedAppointment.id));
-      toast.success("Turno eliminado");
-      addLog("Eliminar", "Turnos", `Turno ${selectedAppointment.id} eliminado`);
+      try {
+        await cancelarTurno(selectedAppointment.id, "Eliminado por el usuario", user?.id || "1");
+        setAppointments(prev => prev.filter(apt => apt.id !== selectedAppointment.id));
+        toast.success("Turno eliminado");
+        addLog("Eliminar", "Turnos", `Turno ${selectedAppointment.id} eliminado`);
+        handleCancel();
+      } catch {
+        toast.error("Error al eliminar el turno.");
+      }
       setDeleteDialogOpen(false);
-      handleCancel();
     }
   };
 

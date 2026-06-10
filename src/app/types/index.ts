@@ -42,6 +42,9 @@ export interface User {
   fullName: string;
   roleId: string;
   role?: Role; // Populated cuando se necesita
+  // Populated at auth time from Firestore /usuarios/{uid} for fast access
+  roleName?: 'admin' | 'veterinario' | 'recepcionista' | 'peluquero';
+  permissions?: PermissionName[];
   phone?: string;
   active: boolean;
   passwordResetToken?: string;

@@ -37,9 +37,20 @@ type ModuleType =
   | "business_hours";
 
 function AppContent() {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const [activeModule, setActiveModule] =
     useState<ModuleType>("dashboard");
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-white">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4" />
+          <p className="text-gray-500 text-sm">Cargando sistema...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return <Login />;

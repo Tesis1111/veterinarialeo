@@ -67,9 +67,9 @@ export default function Navigation({ activeModule, setActiveModule }: Navigation
     setMobileMenuOpen(false);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setUserPanelOpen(false);
-    logout();
+    await logout();
   };
 
   return (
