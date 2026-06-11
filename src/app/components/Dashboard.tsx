@@ -7,6 +7,7 @@ import {
   CardTitle,
 } from "./ui/card";
 import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
 import {
   Users,
   PawPrint,
@@ -15,6 +16,10 @@ import {
   TrendingUp,
   Clock,
   Settings,
+  Shield,
+  Stethoscope,
+  UserCheck,
+  BarChart2,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import {
@@ -37,6 +42,12 @@ import { Label } from "./ui/label";
 import { Switch } from "./ui/switch";
 import { toast } from "sonner";
 import ReportsModule from "./modules/ReportsModule";
+import { traerClientes } from "../services/clienteService";
+import { traerMascotas } from "../services/mascotaService";
+import { traerTodosLosHistoriales } from "../services/historialService";
+import { traerTurnos } from "../services/turnoService";
+import { ROLE_META } from "../services/userService";
+import { FIREBASE_CONFIGURED } from "../firebase/config";
 
 type ActiveModule =
   | "dashboard"
@@ -75,38 +86,30 @@ export default function Dashboard({
   const [preferencesOpen, setPreferencesOpen] = useState(false);
 
   useEffect(() => {
-    const loadedClients = localStorage.getItem(
-      "veterinaria_clients",
-    );
-    const loadedPets = localStorage.getItem("veterinaria_pets");
-    const loadedRecords = localStorage.getItem(
-      "veterinaria_medical_records",
-    );
-    const loadedAppointments = localStorage.getItem(
-      "veterinaria_appointments",
-    );
-    const loadedPreferences = localStorage.getItem(
-      "veterinaria_dashboard_preferences",
-    );
+    // Load via service layer (Firestore when configured, localStorage as fallback)
+    traerClientes().catch(() => {
+      const s = localStorage.getItem("veterinaria_clients");
+      return s ? JSON.parse(s) : initialClients;
+    }).then(setClients);
 
-    setClients(
-      loadedClients
-        ? JSON.parse(loadedClients)
-        : initialClients,
-    );
-    setPets(loadedPets ? JSON.parse(loadedPets) : initialPets);
-    setMedicalRecords(
-      loadedRecords
-        ? JSON.parse(loadedRecords)
-        : initialMedicalRecords,
-    );
-    setAppointments(
-      loadedAppointments
-        ? JSON.parse(loadedAppointments)
-        : initialAppointments,
-    );
+    traerMascotas().catch(() => {
+      const s = localStorage.getItem("veterinaria_pets");
+      return s ? JSON.parse(s) : initialPets;
+    }).then(setPets);
+
+    traerTodosLosHistoriales().catch(() => {
+      const s = localStorage.getItem("veterinaria_medical_records");
+      return s ? JSON.parse(s) : initialMedicalRecords;
+    }).then(setMedicalRecords);
+
+    traerTurnos().catch(() => {
+      const s = localStorage.getItem("veterinaria_appointments");
+      return s ? JSON.parse(s) : initialAppointments;
+    }).then(setAppointments);
+
+    const loadedPreferences = localStorage.getItem("veterinaria_dashboard_preferences");
     if (loadedPreferences) {
-      setPreferences(JSON.parse(loadedPreferences));
+      try { setPreferences(JSON.parse(loadedPreferences)); } catch { /* ignore */ }
     }
   }, []);
 
@@ -203,17 +206,34 @@ export default function Dashboard({
   return (
     <div className="space-y-4 md:space-y-6">
       {/* Welcome Section */}
-      <div className="bg-gradient-to-r from-orange-500 to-orange-600 rounded-lg shadow-lg p-4 md:p-6 lg:p-8 text-white flex justify-between items-center">
-        <div>
-          <h1 className="text-white mb-2 text-xl md:text-2xl lg:text-3xl">
-            Bienvenido, {user?.fullName}
-          </h1>
+      <div className="bg-gradient-to-r from-orange-500 to-orange-600 rounded-xl shadow-lg p-4 md:p-6 lg:p-8 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <div className="flex-1">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <h1 className="text-white text-xl md:text-2xl lg:text-3xl m-0">
+              Bienvenido, {user?.fullName?.split(" ")[0]}
+            </h1>
+            {/* Role badge */}
+            {user?.roleName && ROLE_META[user.roleName] && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-white/20 text-white border border-white/30">
+                {user.roleName === "admin" && <Shield className="h-3 w-3" />}
+                {user.roleName === "veterinario" && <Stethoscope className="h-3 w-3" />}
+                {user.roleName === "recepcionista" && <UserCheck className="h-3 w-3" />}
+                {ROLE_META[user.roleName].displayName}
+              </span>
+            )}
+          </div>
           <p className="text-orange-100 text-sm md:text-base">
-            {isAdmin
-              ? "Panel de Administración"
-              : "Panel de Empleado"}{" "}
-            - Sistema de Gestión Veterinaria Leo
+            Sistema de Gestión Veterinaria Leo
+            {" · "}
+            {format(new Date(), "EEEE d 'de' MMMM, yyyy", { locale: es })}
           </p>
+          {/* Firebase connection indicator */}
+          <div className="flex items-center gap-1.5 mt-2">
+            <span className={`h-1.5 w-1.5 rounded-full ${FIREBASE_CONFIGURED ? "bg-green-300" : "bg-yellow-300"}`} />
+            <span className="text-xs text-orange-100">
+              {FIREBASE_CONFIGURED ? "Conectado a Firebase" : "Modo demo (sin Firebase)"}
+            </span>
+          </div>
         </div>
         <Dialog open={preferencesOpen} onOpenChange={setPreferencesOpen}>
           <DialogTrigger asChild>
@@ -543,6 +563,28 @@ export default function Dashboard({
                   Historial Clínico
                 </span>
               </Button>
+
+              {/* Admin-only actions */}
+              {isAdmin && (
+                <Button
+                  onClick={() => setActiveModule("users")}
+                  variant="outline"
+                  className="h-auto py-3 md:py-4 flex flex-col items-center gap-2 border-orange-300 hover:bg-orange-50 text-xs md:text-sm"
+                >
+                  <Shield className="h-5 w-5 md:h-6 md:w-6 text-orange-600" />
+                  <span className="text-center">Usuarios</span>
+                </Button>
+              )}
+              {isAdmin && (
+                <Button
+                  onClick={() => setActiveModule("reports")}
+                  variant="outline"
+                  className="h-auto py-3 md:py-4 flex flex-col items-center gap-2 border-orange-300 hover:bg-orange-50 text-xs md:text-sm"
+                >
+                  <BarChart2 className="h-5 w-5 md:h-6 md:w-6 text-orange-600" />
+                  <span className="text-center">Reportes</span>
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>

@@ -9,6 +9,7 @@ import {
   desactivarUsuario,
   validarUnicidadUsuario,
 } from "../../services/usuarioService";
+import { asignarRolSeguro, ROLE_META } from "../../services/userService";
 import {
   traerTodosLosHorarios,
   registrarHorario,
@@ -71,6 +72,7 @@ const rolePermissionsMap: Record<RoleType, { label: string; description: string;
   ],
 };
 
+// roleInfo is derived from ROLE_META (imported from userService) for consistency
 const roleInfo: Record<RoleType, { displayName: string; color: string; description: string }> = {
   admin: { displayName: "Administrador", color: "bg-orange-100 text-orange-800 border-orange-300", description: "Acceso completo al sistema" },
   veterinario: { displayName: "Veterinario", color: "bg-blue-100 text-blue-800 border-blue-300", description: "Gestión clínica y de turnos" },
@@ -227,6 +229,16 @@ export default function UsersModule() {
           active: formData.active,
           roleId: formData.role,
         }, currentUser?.id || "1");
+
+        // If the role changed, use the secure role-assignment path
+        if (selectedUser.roleName !== formData.role && currentUser) {
+          await asignarRolSeguro(
+            currentUser,
+            selectedUser.id,
+            formData.role as "admin" | "veterinario" | "recepcionista" | "peluquero"
+          );
+        }
+
         setUsers(prev => prev.map(u => u.id === selectedUser.id ? updated : u));
         toast.success("Usuario actualizado exitosamente");
       } else {

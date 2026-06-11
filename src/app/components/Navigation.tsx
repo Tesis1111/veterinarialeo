@@ -4,6 +4,7 @@ import { Dog, Users, PawPrint, FileText, Calendar, Shield, Menu, X, User, LogOut
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle, SheetDescription } from "./ui/sheet";
+import { ROLE_META } from "../services/userService";
 
 type ActiveModule = "dashboard" | "clients" | "pets" | "medical" | "appointments" | "users" | "audit" | "reports" | "profile" | "business_hours";
 
@@ -181,13 +182,15 @@ export default function Navigation({ activeModule, setActiveModule }: Navigation
                     </div>
                     <div className="flex-1">
                       <p className="font-medium text-gray-800">{user?.fullName}</p>
-                      <Badge className={
-                        isAdmin 
-                          ? "bg-orange-100 text-orange-800 mt-1" 
-                          : "bg-blue-100 text-blue-800 mt-1"
-                      }>
-                        {isAdmin ? "Administrador" : "Empleado"}
-                      </Badge>
+                      {user?.roleName && ROLE_META[user.roleName] ? (
+                        <Badge className={`${ROLE_META[user.roleName].bgColor} mt-1 border`}>
+                          {ROLE_META[user.roleName].displayName}
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-gray-100 text-gray-700 mt-1">
+                          {user?.roleId ?? "Usuario"}
+                        </Badge>
+                      )}
                     </div>
                   </div>
                   
