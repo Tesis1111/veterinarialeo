@@ -43,8 +43,8 @@ export default function PWAStatus() {
     };
   }, []);
 
-  // Solo mostrar en modo desarrollo (puedes quitar esto en producción)
-  if (process.env.NODE_ENV !== 'development') {
+  // Solo mostrar en modo desarrollo
+  if (!import.meta.env.DEV) {
     return null;
   }
 

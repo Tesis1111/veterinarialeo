@@ -25,7 +25,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Badge } from "../ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Search, PawPrint, Save, X, Trash2, Edit, Calendar as CalendarIcon, Info, UserX, Users, History, Skull, AlertTriangle, FileText, FileSpreadsheet, List } from "lucide-react";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import {

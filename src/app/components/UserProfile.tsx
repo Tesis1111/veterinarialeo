@@ -7,7 +7,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Badge } from "./ui/badge";
 import { User, Mail, Shield, CheckCircle, XCircle, Edit, Save, X, Phone } from "lucide-react";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 
 type ActiveModule = "dashboard" | "clients" | "pets" | "medical" | "appointments" | "users" | "profile";
 

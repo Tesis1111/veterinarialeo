@@ -30,7 +30,7 @@ import {
   Shield, UserPlus, Save, X, Edit, Clock, Trash2, Plus,
   CheckCircle2, Users, Eye, EyeOff, Info, Calendar as CalendarIcon
 } from "lucide-react";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 
 // ══════════════════════════════════════════════
 // TIPOS Y CONSTANTES

@@ -24,7 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Badge } from "../ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../ui/alert-dialog";
 import { Calendar as CalendarIcon, Clock, PawPrint, X, Save, AlertTriangle, Bell, CheckCircle2, FileSpreadsheet, FileText } from "lucide-react";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 import { format, isSameDay, isBefore, differenceInHours, startOfDay, addDays } from "date-fns";
 import { es } from "date-fns/locale";
 import {

@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { format, startOfMonth, endOfMonth, subMonths, isWithinInterval } from "date-fns";
 import { es } from "date-fns/locale";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 import { initialClients, initialPets, initialMedicalRecords, initialAppointments, doctors } from "../../data/mockData";
 import { exportToPDF, exportToExcel } from "../../utils/exportUtils";
 import CustomReportBuilder from "./CustomReportBuilder";

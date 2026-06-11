@@ -30,7 +30,7 @@ import {
   Stethoscope, Pill, ClipboardList, AlertCircle, Mail, CheckSquare, Square, Send,
   FileSpreadsheet, Skull, AlertTriangle
 } from "lucide-react";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";

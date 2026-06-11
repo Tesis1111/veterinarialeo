@@ -8,7 +8,7 @@ import { Checkbox } from "../ui/checkbox";
 import { Download, FileSpreadsheet, Settings } from "lucide-react";
 import { format } from "date-fns";
 import { exportToExcel } from "../../utils/exportUtils";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 
 interface CustomReportBuilderProps {
   clients: any[];
