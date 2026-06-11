@@ -1,17 +1,15 @@
 /**
- * userService.ts — Servicio público de gestión de usuarios
+ * userService.ts — Fachada pública de gestión de usuarios
  *
- * Este archivo es la fachada principal para operaciones de usuario y
- * asignación de roles.  Internamente delega en usuarioService.ts (que
- * contiene la lógica de Firestore / Firebase Auth) y agrega helpers de
- * alto nivel que la UI consume directamente.
- *
- * Exporta todo el contrato de usuarioService más utilidades extra:
- *   - bootstrapFirstAdmin()   → crea el primer admin desde Firebase Console
- *   - asignarRolSeguro()      → verifica que el llamante sea admin antes de cambiar roles
- *   - getPermissionLabel()    → etiquetas legibles para la UI
+ * Re-exporta todo el contrato de usuarioService.ts y agrega:
+ *   - ROLE_PERMISSIONS  → permisos por defecto de cada rol
+ *   - PERMISSION_LABELS → etiquetas en español para la UI
+ *   - ROLE_META         → metadatos visuales por rol (colores, descripción)
+ *   - asignarRolSeguro  → cambio de rol verificando que el llamante sea admin
+ *   - bootstrapFirstAdmin → promueve la primera cuenta a admin (consola)
  */
 
+// ── Re-export full usuarioService contract ────────────────────────────────────
 export {
   traerUsuarios,
   traerUsuarioPorId,
@@ -21,16 +19,18 @@ export {
   validarUnicidadUsuario,
   asignarRoles,
   asignarPermisos,
-  ROLE_PERMISSIONS,
 } from "./usuarioService";
 
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db, auth, FIREBASE_CONFIGURED } from "../firebase/config";
 import { PermissionName, User } from "../types";
-import { ROLE_PERMISSIONS } from "./usuarioService";
+// ROLE_PERMISSIONS is the single source of truth — defined in AuthContext
+import { ROLE_PERMISSIONS } from "../context/AuthContext";
+export { ROLE_PERMISSIONS };
 
-// ── Permission display labels (Spanish) ───────────────────────────────────
-
+// ─────────────────────────────────────────────────────────────────────────────
+// Permission display labels (Spanish UI strings)
+// ─────────────────────────────────────────────────────────────────────────────
 export const PERMISSION_LABELS: Record<PermissionName, string> = {
   view_clients:           "Ver clientes",
   manage_clients:         "Gestionar clientes",
@@ -49,8 +49,9 @@ export const PERMISSION_LABELS: Record<PermissionName, string> = {
   manage_services:        "Gestionar servicios",
 };
 
-// ── Role display metadata ─────────────────────────────────────────────────
-
+// ─────────────────────────────────────────────────────────────────────────────
+// Role visual metadata
+// ─────────────────────────────────────────────────────────────────────────────
 export const ROLE_META: Record<string, {
   displayName: string;
   color: string;
@@ -87,16 +88,13 @@ export function getPermissionLabel(permission: PermissionName): string {
   return PERMISSION_LABELS[permission] ?? permission;
 }
 
-// ── asignarRolSeguro ──────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// asignarRolSeguro — cambio de rol con verificación de privilegio
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Cambia el rol de un usuario con verificación de que el llamante es admin.
- * Escribe directamente en /usuarios/{uid} (no a través de Firebase Auth Custom Claims
- * ya que eso requeriría Cloud Functions; los claims se leen sólo en el contexto).
- *
- * @param callerUser  El usuario autenticado que realiza la acción
- * @param targetUid   UID del usuario al que se le cambia el rol
- * @param newRole     Nuevo rol a asignar
+ * Cambia el rol de `targetUid` verificando que `callerUser` sea admin.
+ * Escribe roleId, roleName y permissions en /usuarios/{targetUid}.
  */
 export async function asignarRolSeguro(
   callerUser: User,
@@ -106,19 +104,18 @@ export async function asignarRolSeguro(
   if (callerUser.roleName !== "admin") {
     throw new Error("Solo un administrador puede cambiar roles.");
   }
-
   if (!FIREBASE_CONFIGURED || !db) {
-    throw new Error("Firebase no está configurado. Configure las variables de entorno.");
+    throw new Error(
+      "Firebase no configurado. Defina las variables VITE_FIREBASE_* en el entorno."
+    );
   }
-
-  const newPermissions: PermissionName[] = ROLE_PERMISSIONS[newRole] ?? [];
 
   await setDoc(
     doc(db, "usuarios", targetUid),
     {
       roleId: newRole,
       roleName: newRole,
-      permissions: newPermissions,
+      permissions: ROLE_PERMISSIONS[newRole] ?? [],
       updatedBy: callerUser.id,
       updatedAt: serverTimestamp(),
     },
@@ -126,35 +123,42 @@ export async function asignarRolSeguro(
   );
 }
 
-// ── bootstrapFirstAdmin ───────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// bootstrapFirstAdmin — inicialización del primer administrador
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Eleva a admin al usuario actualmente autenticado en Firebase Auth.
- * Úsese UNA VEZ desde la consola del navegador o desde un script de seed
- * cuando el documento /usuarios/{uid} aún no existe o no tiene rol.
+ * Crea o completa el documento /usuarios/{uid} del usuario actualmente
+ * autenticado en Firebase Auth, asignándole el rol admin.
  *
- * IMPORTANTE: Este método NO está disponible en la UI de producción.
- * Para usar en la consola del navegador:
- *   import { bootstrapFirstAdmin } from './services/userService';
+ * Úselo UNA SOLA VEZ desde la consola del navegador para preparar
+ * la primera cuenta de administrador:
+ *
+ *   const { bootstrapFirstAdmin } = await import('/src/app/services/userService.ts');
  *   await bootstrapFirstAdmin();
+ *
+ * Luego recargue la página. A partir de ahí use la UI de Usuarios para
+ * crear las demás cuentas.
  */
 export async function bootstrapFirstAdmin(): Promise<void> {
   if (!FIREBASE_CONFIGURED || !db || !auth) {
     throw new Error("Firebase no configurado.");
   }
 
-  const currentUser = auth.currentUser;
-  if (!currentUser) {
-    throw new Error("No hay sesión activa en Firebase Auth. Inicie sesión primero.");
+  const fbUser = auth.currentUser;
+  if (!fbUser) {
+    throw new Error(
+      "No hay sesión activa. Inicie sesión en Firebase Auth primero."
+    );
   }
 
   await setDoc(
-    doc(db, "usuarios", currentUser.uid),
+    doc(db, "usuarios", fbUser.uid),
     {
-      uid: currentUser.uid,
-      email: currentUser.email,
-      fullName: currentUser.displayName ?? "Administrador",
-      username: (currentUser.email ?? "admin").split("@")[0],
+      uid: fbUser.uid,
+      email: fbUser.email,
+      fullName: fbUser.displayName ?? "Administrador",
+      username: (fbUser.email ?? "admin").split("@")[0],
       roleId: "admin",
       roleName: "admin",
       permissions: ROLE_PERMISSIONS.admin,
@@ -165,7 +169,6 @@ export async function bootstrapFirstAdmin(): Promise<void> {
   );
 
   console.info(
-    `✅ Usuario ${currentUser.email} promovido a admin en Firestore. ` +
-    "Recargue la página para aplicar los cambios."
+    `✅ ${fbUser.email} promovido a admin. Recargue la página para aplicar los cambios.`
   );
 }

@@ -12,14 +12,23 @@ import {
   updateProfile,
   type User as FirebaseUser,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  serverTimestamp,
+} from "firebase/firestore";
 import { auth, db, FIREBASE_CONFIGURED } from "../firebase/config";
 import { User, PermissionName } from "../types";
 
-// ============================================================
-// Permission mapping by role (used for localStorage fallback)
-// ============================================================
-const ROLE_PERMISSIONS: Record<string, PermissionName[]> = {
+// ─────────────────────────────────────────────────────────────────────────────
+// Default permissions per role — single source of truth
+// ─────────────────────────────────────────────────────────────────────────────
+export const ROLE_PERMISSIONS: Record<string, PermissionName[]> = {
   admin: [
     "view_clients", "manage_clients",
     "view_pets", "manage_pets",
@@ -47,56 +56,13 @@ const ROLE_PERMISSIONS: Record<string, PermissionName[]> = {
   ],
 };
 
-// ============================================================
-// Mock users — used ONLY when Firebase is not configured
-// ============================================================
-const MOCK_USERS: User[] = [
-  {
-    id: "1",
-    username: "admin",
-    email: "admin@veterinaria.com",
-    fullName: "Administrador Principal",
-    roleId: "admin",
-    roleName: "admin",
-    permissions: ROLE_PERMISSIONS.admin,
-    phone: "+54 11 1234-5678",
-    active: true,
-    createdAt: new Date(2020, 0, 1),
-  },
-  {
-    id: "2",
-    username: "veterinario",
-    email: "veterinario@veterinaria.com",
-    fullName: "Dra. María Fernández",
-    roleId: "veterinario",
-    roleName: "veterinario",
-    permissions: ROLE_PERMISSIONS.veterinario,
-    phone: "+54 11 2345-6789",
-    active: true,
-    createdAt: new Date(2021, 0, 1),
-  },
-  {
-    id: "3",
-    username: "recepcionista",
-    email: "recepcionista@veterinaria.com",
-    fullName: "Juan Pérez",
-    roleId: "recepcionista",
-    roleName: "recepcionista",
-    permissions: ROLE_PERMISSIONS.recepcionista,
-    phone: "+54 11 9876-5432",
-    active: true,
-    createdAt: new Date(2021, 6, 1),
-  },
-];
-
-// ============================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // Context interface
-// ============================================================
+// ─────────────────────────────────────────────────────────────────────────────
 interface AuthContextType {
   user: User | null;
-  users: User[];
   loading: boolean;
-  login: (emailOrUsername: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   updateUser: (updates: Partial<User>) => Promise<void>;
   hasPermission: (permission: PermissionName) => boolean;
@@ -107,27 +73,32 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// ============================================================
-// Helpers — Firestore
-// ============================================================
-async function loadUserFromFirestore(firebaseUser: FirebaseUser): Promise<User | null> {
+// ─────────────────────────────────────────────────────────────────────────────
+// Firestore helper — build app User from a Firebase Auth user
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadUserFromFirestore(fbUser: FirebaseUser): Promise<User | null> {
   if (!db) return null;
   try {
-    const ref = doc(db, "usuarios", firebaseUser.uid);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return null;
+    const snap = await getDoc(doc(db, "usuarios", fbUser.uid));
+    if (!snap.exists()) {
+      // Document missing: user exists in Auth but not in Firestore.
+      // This can happen if the admin was created directly via Firebase Console.
+      // Return a minimal profile so the session doesn't break; admin should
+      // run bootstrapFirstAdmin() to create the Firestore document.
+      return null;
+    }
 
     const data = snap.data();
-    const roleName = (data.roleName as User["roleName"]) ?? "recepcionista";
+    const roleName = (data.roleName ?? data.roleId ?? "recepcionista") as User["roleName"];
 
     return {
-      id: firebaseUser.uid,
-      username: data.username ?? firebaseUser.email ?? firebaseUser.uid,
-      email: firebaseUser.email ?? data.email ?? "",
-      fullName: firebaseUser.displayName ?? data.fullName ?? "",
-      roleId: data.roleId ?? roleName,
+      id: fbUser.uid,
+      username: data.username ?? fbUser.email ?? fbUser.uid,
+      email: fbUser.email ?? data.email ?? "",
+      fullName: data.fullName ?? fbUser.displayName ?? "",
+      roleId: data.roleId ?? roleName ?? "",
       roleName,
-      permissions: data.permissions ?? ROLE_PERMISSIONS[roleName] ?? [],
+      permissions: (data.permissions as PermissionName[]) ?? ROLE_PERMISSIONS[roleName ?? "recepcionista"] ?? [],
       phone: data.phone,
       active: data.active !== false,
       createdAt: data.createdAt?.toDate() ?? new Date(),
@@ -139,59 +110,46 @@ async function loadUserFromFirestore(firebaseUser: FirebaseUser): Promise<User |
   }
 }
 
-function writeAuditLog(entry: {
-  userId: string;
-  userName: string;
-  userRole: string;
-  action: string;
-  module: string;
-  details: string;
+// Lightweight audit write — used for login/logout only.
+// Full audit logs go through AuditContext → auditoriaService.
+function writeLoginAuditLog(entry: {
+  userId: string; userName: string; userRole: string;
+  action: string; module: string; details: string;
 }) {
   try {
-    const logs = JSON.parse(localStorage.getItem("veterinaria_audit_logs") || "[]");
-    logs.unshift({
-      ...entry,
-      id: Date.now().toString(),
-      timestamp: new Date(),
-      ipAddress: "127.0.0.1",
-    });
-    localStorage.setItem("veterinaria_audit_logs", JSON.stringify(logs.slice(0, 1000)));
-  } catch {
-    // ignore
-  }
+    const existing = JSON.parse(localStorage.getItem("veterinaria_audit_logs") ?? "[]");
+    existing.unshift({ ...entry, id: Date.now().toString(), timestamp: new Date(), ipAddress: "127.0.0.1" });
+    localStorage.setItem("veterinaria_audit_logs", JSON.stringify(existing.slice(0, 1000)));
+  } catch { /* ignore */ }
 }
 
-// ============================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // Provider
-// ============================================================
+// ─────────────────────────────────────────────────────────────────────────────
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // ── Firebase mode: subscribe to auth state ──────────────────
+  // ── Subscribe to Firebase Auth state ───────────────────────────────────────
   useEffect(() => {
     if (!FIREBASE_CONFIGURED || !auth) {
-      // Fallback: restore from localStorage
-      try {
-        const saved = localStorage.getItem("veterinaria_user");
-        if (saved) setUser(JSON.parse(saved));
-      } catch {
-        // ignore
-      }
+      // Firebase not configured: no session, show login immediately.
       setLoading(false);
       return;
     }
 
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        const appUser = await loadUserFromFirestore(firebaseUser);
-        setUser(appUser);
-        if (appUser) {
-          localStorage.setItem("veterinaria_user", JSON.stringify(appUser));
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      if (fbUser) {
+        const appUser = await loadUserFromFirestore(fbUser);
+        if (appUser && appUser.active) {
+          setUser(appUser);
+        } else {
+          // User exists in Auth but is inactive or has no Firestore doc.
+          await signOut(auth);
+          setUser(null);
         }
       } else {
         setUser(null);
-        localStorage.removeItem("veterinaria_user");
       }
       setLoading(false);
     });
@@ -199,130 +157,102 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, []);
 
-  // ── login ───────────────────────────────────────────────────
-  const login = async (emailOrUsername: string, password: string): Promise<boolean> => {
-    if (FIREBASE_CONFIGURED && auth) {
-      try {
-        // Accept either email or username; map username → email via Firestore
-        let email = emailOrUsername;
-        if (!emailOrUsername.includes("@") && db) {
-          const { collection, query, where, getDocs } = await import("firebase/firestore");
-          const q = query(
-            collection(db, "usuarios"),
-            where("username", "==", emailOrUsername)
-          );
-          const snap = await getDocs(q);
-          if (!snap.empty) {
-            email = snap.docs[0].data().email;
-          }
-        }
+  // ── login ───────────────────────────────────────────────────────────────────
+  const login = async (email: string, password: string): Promise<boolean> => {
+    if (!FIREBASE_CONFIGURED || !auth) {
+      // Firebase not configured — cannot authenticate.
+      // Do NOT fall back to hardcoded credentials in production.
+      console.warn(
+        "[AuthContext] Firebase is not configured. " +
+        "Set the VITE_FIREBASE_* environment variables to enable login."
+      );
+      return false;
+    }
 
-        const cred = await signInWithEmailAndPassword(auth, email, password);
-        const appUser = await loadUserFromFirestore(cred.user);
-        if (!appUser || !appUser.active) {
-          await signOut(auth);
-          return false;
-        }
+    try {
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      const appUser = await loadUserFromFirestore(cred.user);
 
-        if (db) {
-          await setDoc(doc(db, "usuarios", cred.user.uid), { lastLogin: serverTimestamp() }, { merge: true });
-        }
-
-        setUser(appUser);
-        localStorage.setItem("veterinaria_user", JSON.stringify(appUser));
-
-        writeAuditLog({
-          userId: appUser.id,
-          userName: appUser.fullName,
-          userRole: appUser.roleName ?? appUser.roleId,
-          action: "Iniciar Sesión",
-          module: "Autenticación",
-          details: `Usuario ${appUser.username} inició sesión via Firebase Auth`,
-        });
-
-        return true;
-      } catch {
+      if (!appUser) {
+        // Auth succeeded but no Firestore document exists.
+        await signOut(auth);
         return false;
       }
-    }
 
-    // ── localStorage / mock fallback ──────────────────────────
-    const found = MOCK_USERS.find(
-      (u) =>
-        (u.username === emailOrUsername || u.email === emailOrUsername) &&
-        u.active
-    );
-    const MOCK_PASSWORDS: Record<string, string> = {
-      admin: "admin123",
-      veterinario: "vet123",
-      recepcionista: "rec123",
-    };
-    const passOk = found ? MOCK_PASSWORDS[found.username] === password : false;
+      if (!appUser.active) {
+        await signOut(auth);
+        return false;
+      }
 
-    if (found && passOk) {
-      setUser(found);
-      localStorage.setItem("veterinaria_user", JSON.stringify(found));
-      writeAuditLog({
-        userId: found.id,
-        userName: found.fullName,
-        userRole: found.roleName ?? found.roleId,
+      // Update lastLogin in Firestore (non-blocking)
+      if (db) {
+        setDoc(
+          doc(db, "usuarios", cred.user.uid),
+          { lastLogin: serverTimestamp() },
+          { merge: true }
+        ).catch(() => { /* ignore */ });
+      }
+
+      setUser(appUser);
+      writeLoginAuditLog({
+        userId: appUser.id,
+        userName: appUser.fullName,
+        userRole: appUser.roleName ?? appUser.roleId,
         action: "Iniciar Sesión",
         module: "Autenticación",
-        details: `Usuario ${found.username} inició sesión (modo demo)`,
+        details: `${appUser.email} inició sesión`,
       });
+
       return true;
+    } catch (err: any) {
+      // Firebase auth errors (wrong password, user not found, etc.) are
+      // intentionally swallowed here — the UI shows a generic message.
+      return false;
     }
-    return false;
   };
 
-  // ── logout ──────────────────────────────────────────────────
+  // ── logout ──────────────────────────────────────────────────────────────────
   const logout = async () => {
     if (user) {
-      writeAuditLog({
+      writeLoginAuditLog({
         userId: user.id,
         userName: user.fullName,
         userRole: user.roleName ?? user.roleId,
         action: "Cerrar Sesión",
         module: "Autenticación",
-        details: `Usuario ${user.username} cerró sesión`,
+        details: `${user.email} cerró sesión`,
       });
     }
 
     if (FIREBASE_CONFIGURED && auth) {
       await signOut(auth);
     }
-
     setUser(null);
-    localStorage.removeItem("veterinaria_user");
   };
 
-  // ── updateUser ──────────────────────────────────────────────
+  // ── updateUser ──────────────────────────────────────────────────────────────
   const updateUser = async (updates: Partial<User>) => {
     if (!user) return;
 
-    const updatedUser: User = { ...user, ...updates, updatedAt: new Date() };
+    const merged: User = { ...user, ...updates, updatedAt: new Date() };
 
     if (FIREBASE_CONFIGURED && auth?.currentUser && db) {
       try {
-        const { fullName, phone } = updates;
-        if (fullName) {
-          await updateProfile(auth.currentUser, { displayName: fullName });
+        if (updates.fullName) {
+          await updateProfile(auth.currentUser, { displayName: updates.fullName });
         }
         await setDoc(
           doc(db, "usuarios", user.id),
-          { fullName, phone, updatedAt: serverTimestamp() },
+          { fullName: updates.fullName, phone: updates.phone, updatedAt: serverTimestamp() },
           { merge: true }
         );
-      } catch {
-        // best effort
-      }
+      } catch { /* best-effort */ }
     }
 
-    setUser(updatedUser);
-    localStorage.setItem("veterinaria_user", JSON.stringify(updatedUser));
+    setUser(merged);
   };
 
-  // ── hasPermission ───────────────────────────────────────────
+  // ── hasPermission ────────────────────────────────────────────────────────────
   const hasPermission = (permission: PermissionName): boolean => {
     if (!user) return false;
     return (user.permissions ?? []).includes(permission);
@@ -333,29 +263,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isRecepcionista = user?.roleName === "recepcionista";
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        users: MOCK_USERS,
-        loading,
-        login,
-        logout,
-        updateUser,
-        hasPermission,
-        isAdmin,
-        isVeterinario,
-        isRecepcionista,
-      }}
-    >
+    <AuthContext.Provider value={{
+      user,
+      loading,
+      login,
+      logout,
+      updateUser,
+      hasPermission,
+      isAdmin,
+      isVeterinario,
+      isRecepcionista,
+    }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
 export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within an AuthProvider");
+  return ctx;
 }
