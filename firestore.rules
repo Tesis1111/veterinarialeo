@@ -101,6 +101,44 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ── /especies ─────────────────────────────────────────
+    // All authenticated users read; only admin writes
+    match /especies/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin();
+    }
+
+    // ── /razas ────────────────────────────────────────────
+    // All authenticated users read; only admin writes
+    match /razas/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin();
+    }
+
+    // ── /tiposEvento ──────────────────────────────────────
+    // All authenticated users read; only admin writes
+    match /tiposEvento/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin();
+    }
+
+    // ── /arbolVacunacion ──────────────────────────────────
+    // All authenticated users read; only admin writes
+    match /arbolVacunacion/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin();
+    }
+
+    // ── /doctores ─────────────────────────────────────────
+    // All authenticated users read (needed to populate selects)
+    // Admin: full R/W; veterinarios/peluqueros can update their own profile
+    match /doctores/{docId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAdmin();
+      allow update: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
     // ── Deny everything else ──────────────────────────────
     match /{document=**} {
       allow read, write: if false;

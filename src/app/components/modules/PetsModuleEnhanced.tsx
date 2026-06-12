@@ -11,6 +11,8 @@ import {
   ValidarUnicidadMascota,
 } from "../../services/mascotaService";
 import { traerClientes } from "../../services/clienteService";
+import { traerEspecies, traerTodasLasRazas } from "../../services/parametrosService";
+import { EspecieParametro, RazaParametro } from "../../types";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -28,11 +30,11 @@ import { Search, PawPrint, Save, X, Trash2, Edit, Calendar as CalendarIcon, Info
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+// Static data kept as fallback only; dynamic data loaded from parametrosService
 import {
   PREDEFINED_SPECIES,
-  getBreedsBySpecies,
-  getSpeciesName,
-  getBreedName
+  getSpeciesName as getSpeciesNameStatic,
+  getBreedName as getBreedNameStatic,
 } from "../../data/speciesAndBreeds";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
 
@@ -52,6 +54,8 @@ export default function PetsModuleEnhanced() {
   const [deceasedCalendarOpen, setDeceasedCalendarOpen] = useState(false);
   const [showWeightInfo, setShowWeightInfo] = useState(true);
   const [selectedSpeciesId, setSelectedSpeciesId] = useState("");
+  const [especies, setEspecies] = useState<EspecieParametro[]>([]);
+  const [todasLasRazas, setTodasLasRazas] = useState<RazaParametro[]>([]);
 
   // Filtros avanzados
   const [filterSpecies, setFilterSpecies] = useState<string>("all");
@@ -110,6 +114,11 @@ export default function PetsModuleEnhanced() {
       const savedClients = localStorage.getItem("veterinaria_clients");
       setClients(savedClients ? JSON.parse(savedClients) : initialClients);
     });
+    // Load dynamic species and breeds from parametrosService
+    traerEspecies().then(setEspecies).catch(() => {
+      setEspecies(PREDEFINED_SPECIES.map(s => ({ id: s.id, name: s.name, icon: s.icon, description: s.description, active: true, createdAt: new Date() })));
+    });
+    traerTodasLasRazas().then(setTodasLasRazas).catch(() => setTodasLasRazas([]));
   }, []);
 
   const calculateAge = (birthDate: Date | undefined): string => {
@@ -191,8 +200,14 @@ export default function PetsModuleEnhanced() {
   }, [pets, clients, searchTerm, filterSpecies, filterStatus, filterAge]);
 
   const availableBreeds = useMemo(() => {
-    return selectedSpeciesId ? getBreedsBySpecies(selectedSpeciesId) : [];
-  }, [selectedSpeciesId]);
+    if (!selectedSpeciesId) return [];
+    const fromFirestore = todasLasRazas.filter(r => r.especieId === selectedSpeciesId);
+    return fromFirestore;
+  }, [selectedSpeciesId, todasLasRazas]);
+
+  // Helper: resolve display names from dynamic data (fallback to static)
+  const getSpeciesName = (id: string) => especies.find(e => e.id === id)?.name ?? getSpeciesNameStatic(id);
+  const getBreedName = (id: string) => todasLasRazas.find(r => r.id === id)?.name ?? getBreedNameStatic(id);
 
   const selectPet = (pet: Pet) => {
     setSelectedPet(pet);
@@ -556,9 +571,9 @@ export default function PetsModuleEnhanced() {
                   <SelectValue placeholder="Seleccione especie" />
                 </SelectTrigger>
                 <SelectContent>
-                  {PREDEFINED_SPECIES.map(species => (
+                  {(especies.length > 0 ? especies : PREDEFINED_SPECIES).map(species => (
                     <SelectItem key={species.id} value={species.id}>
-                      {species.icon} {species.name}
+                      {(species as any).icon} {species.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -724,9 +739,9 @@ export default function PetsModuleEnhanced() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todas las especies</SelectItem>
-                    {PREDEFINED_SPECIES.map(species => (
-                      <SelectItem key={species.id} value={species.name}>
-                        {species.icon} {species.name}
+                    {(especies.length > 0 ? especies : PREDEFINED_SPECIES).map(species => (
+                      <SelectItem key={species.id} value={(species as any).name ?? species.name}>
+                        {(species as any).icon} {species.name}
                       </SelectItem>
                     ))}
                   </SelectContent>

@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { Dog, Users, PawPrint, FileText, Calendar, Shield, Menu, X, User, LogOut, Settings, UserCog, Phone, Clock, ClipboardList, Mail, LayoutDashboard, BarChart3 } from "lucide-react";
+import { Dog, Users, PawPrint, FileText, Calendar, Shield, Menu, X, User, LogOut, Settings, UserCog, Phone, Clock, ClipboardList, Mail, LayoutDashboard, BarChart3, Settings2 } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle, SheetDescription } from "./ui/sheet";
 import { ROLE_META } from "../services/userService";
 
-type ActiveModule = "dashboard" | "clients" | "pets" | "medical" | "appointments" | "users" | "audit" | "reports" | "profile" | "business_hours";
+type ActiveModule = "dashboard" | "clients" | "pets" | "medical" | "appointments" | "users" | "audit" | "reports" | "profile" | "business_hours" | "parametros";
 
 interface NavigationProps {
   activeModule: ActiveModule;
@@ -59,7 +59,13 @@ export default function Navigation({ activeModule, setActiveModule }: Navigation
       id: "business_hours" as ActiveModule,
       label: "Horarios de Atención",
       icon: Clock,
-      show: isAdmin // Assuming only admin can manage business hours
+      show: isAdmin
+    },
+    {
+      id: "parametros" as ActiveModule,
+      label: "Parámetros",
+      icon: Settings2,
+      show: isAdmin
     }
   ];
 

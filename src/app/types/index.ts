@@ -681,6 +681,70 @@ export interface FormFieldConfig {
 }
 
 // ============================================
+// MÓDULO DE PARÁMETROS DINÁMICOS
+// ============================================
+
+export interface EspecieParametro {
+  id: string;
+  name: string;
+  icon?: string;
+  description?: string;
+  active: boolean;
+  createdAt: Date;
+  updatedAt?: Date;
+  createdBy?: string;
+}
+
+export interface RazaParametro {
+  id: string;
+  especieId: string;
+  name: string;
+  description?: string;
+  active: boolean;
+  createdAt: Date;
+  updatedAt?: Date;
+  createdBy?: string;
+}
+
+export interface TipoEvento {
+  id: string;
+  name: string;
+  color: string;
+  requiresVaccineTracking?: boolean;
+  active: boolean;
+  createdAt: Date;
+  updatedAt?: Date;
+  createdBy?: string;
+}
+
+export interface VacunaParametro {
+  id: string;
+  especieId: string;
+  especieName?: string;
+  nombreVacuna: string;
+  dosis: number;
+  periodicidadDias: number;
+  descripcion?: string;
+  active: boolean;
+  createdAt: Date;
+  updatedAt?: Date;
+  createdBy?: string;
+}
+
+export interface DoctorPerfil {
+  id: string;
+  userId?: string;
+  fullName: string;
+  specialty: string;
+  licenseNumber?: string;
+  phone?: string;
+  available: boolean;
+  createdAt: Date;
+  updatedAt?: Date;
+  createdBy?: string;
+}
+
+// ============================================
 // EXPORTACIONES DE COMPATIBILIDAD
 // ============================================
 

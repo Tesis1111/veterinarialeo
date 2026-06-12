@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { useAudit } from "../../context/AuditContext";
-import { Appointment, Client, Pet, AppointmentType, AppointmentStatus, Doctor, DoctorSchedule } from "../../types";
+import { Appointment, Client, Pet, AppointmentType, AppointmentStatus, Doctor, DoctorSchedule, TipoEvento, DoctorPerfil } from "../../types";
 import { initialAppointments, initialClients, initialPets, doctors as initialDoctors } from "../../data/mockData";
 import {
   traerTurnos,
@@ -12,6 +12,8 @@ import {
 import { traerClientes } from "../../services/clienteService";
 import { traerMascotas } from "../../services/mascotaService";
 import { traerTodosLosHorarios } from "../../services/horarioService";
+import { traerTiposEvento } from "../../services/parametrosService";
+import { traerDoctores } from "../../services/doctorService";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -44,6 +46,8 @@ export default function AppointmentsModule() {
   const [pets, setPets] = useState<Pet[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [doctorSchedules, setDoctorSchedules] = useState<DoctorSchedule[]>([]);
+  const [tiposEvento, setTiposEvento] = useState<TipoEvento[]>([]);
+  const [doctoresPerfil, setDoctoresPerfil] = useState<DoctorPerfil[]>([]);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
@@ -66,6 +70,7 @@ export default function AppointmentsModule() {
     clientId: "",
     petId: "",
     doctorId: "",
+    eventoTipoId: "",
     date: new Date(),
     startTime: "",
     endTime: "",
@@ -94,6 +99,9 @@ export default function AppointmentsModule() {
     });
     const savedDoctors = localStorage.getItem("veterinaria_doctors");
     setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
+    // Load parametric data
+    traerTiposEvento().then(setTiposEvento).catch(() => setTiposEvento([]));
+    traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
   }, []);
 
   // ── Helpers ──────────────────────────────────────
@@ -101,7 +109,9 @@ export default function AppointmentsModule() {
   const getPetName = (petId: string) => pets.find(p => p.id === petId)?.name || "";
   const getDoctorName = (doctorId?: string) => {
     if (!doctorId) return "-";
-    return doctors.find(d => d.id === doctorId)?.name || "Desconocido";
+    const fromPerfil = doctoresPerfil.find(d => d.id === doctorId);
+    if (fromPerfil) return fromPerfil.fullName;
+    return (doctors.find(d => d.id === doctorId) as any)?.name || "Desconocido";
   };
   const getPetsByClient = (clientId: string) => pets.filter(p => p.clientId === clientId);
 
@@ -330,7 +340,7 @@ export default function AppointmentsModule() {
   };
 
   const handleCancel = () => {
-    setFormData({ type: "clinic", clientId: "", petId: "", doctorId: "", date: new Date(), startTime: "", endTime: "", dateFrom: undefined, dateTo: undefined, reason: "", notes: "" });
+    setFormData({ type: "clinic", clientId: "", petId: "", doctorId: "", eventoTipoId: "", date: new Date(), startTime: "", endTime: "", dateFrom: undefined, dateTo: undefined, reason: "", notes: "" });
     setSelectedAppointment(null);
     setIsEditing(false);
   };
@@ -625,6 +635,23 @@ export default function AppointmentsModule() {
                   </div>
                 </div>
 
+                {/* Motivo / Tipo de evento clínico */}
+                {formData.type === "clinic" && tiposEvento.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Motivo / Tipo de Evento</Label>
+                    <Select value={formData.eventoTipoId} onValueChange={(v) => setFormData(prev => ({ ...prev, eventoTipoId: v }))}>
+                      <SelectTrigger><SelectValue placeholder="Seleccione motivo (opcional)" /></SelectTrigger>
+                      <SelectContent>
+                        {tiposEvento.map(t => (
+                          <SelectItem key={t.id} value={t.id}>
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs mr-1 ${t.color}`}>{t.name}</span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
                 {/* Campos de fecha/hora según tipo */}
                 {(formData.type === "clinic" || formData.type === "grooming") ? (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -654,8 +681,11 @@ export default function AppointmentsModule() {
                       <Select value={formData.doctorId} onValueChange={(v) => setFormData(prev => ({ ...prev, doctorId: v }))}>
                         <SelectTrigger><SelectValue placeholder="Seleccione profesional" /></SelectTrigger>
                         <SelectContent>
-                          {doctors.filter(d => d.available).map(d => (
-                            <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                          {(doctoresPerfil.length > 0 ? doctoresPerfil : doctors.filter(d => d.available)).map(d => (
+                            <SelectItem key={d.id} value={d.id}>
+                              {(d as any).fullName ?? (d as any).name}
+                              {(d as any).specialty ? ` — ${(d as any).specialty}` : ""}
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>

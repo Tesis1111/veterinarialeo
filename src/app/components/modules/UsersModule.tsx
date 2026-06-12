@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
-import { User, Doctor, DoctorSchedule } from "../../types";
+import { User, Doctor, DoctorSchedule, DoctorPerfil } from "../../types";
 import { doctors as initialDoctors } from "../../data/mockData";
 import {
   traerUsuarios,
@@ -10,6 +10,11 @@ import {
   validarUnicidadUsuario,
 } from "../../services/usuarioService";
 import { asignarRolSeguro, ROLE_META } from "../../services/userService";
+import {
+  traerTodosLosDoctores,
+  registrarDoctor,
+  modificarDoctor,
+} from "../../services/doctorService";
 import {
   traerTodosLosHorarios,
   registrarHorario,
@@ -28,7 +33,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../ui/alert-dialog";
 import {
   Shield, UserPlus, Save, X, Edit, Clock, Trash2, Plus,
-  CheckCircle2, Users, Eye, EyeOff, Info, Calendar as CalendarIcon
+  CheckCircle2, Users, Eye, EyeOff, Info, Calendar as CalendarIcon, Stethoscope
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -125,6 +130,7 @@ export default function UsersModule() {
 
   // ── Estado usuarios ──────────────────────────────────────
   const [users, setUsers] = useState<User[]>([]);
+  const [doctoresFirestore, setDoctoresFirestore] = useState<DoctorPerfil[]>([]);
 
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -134,6 +140,8 @@ export default function UsersModule() {
   const [formData, setFormData] = useState({
     username: "", password: "", fullName: "", role: "recepcionista" as RoleType,
     email: "", phone: "", active: true,
+    // Doctor profile fields (only used when role = veterinario or peluquero)
+    specialty: "", licenseNumber: "",
   });
 
   // ── Estado horarios ──────────────────────────────────────
@@ -153,8 +161,15 @@ export default function UsersModule() {
       const saved = localStorage.getItem("veterinaria_doctor_schedules");
       setSchedules(saved ? JSON.parse(saved) : []);
     });
-    const savedDoctors = localStorage.getItem("veterinaria_doctors");
-    setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
+    // Load doctors from Firestore (fallback to localStorage)
+    traerTodosLosDoctores().then(d => {
+      setDoctoresFirestore(d);
+      // Keep legacy doctors state synced for schedule management
+      setDoctors(d.map(dp => ({ id: dp.id, userId: dp.userId ?? "", name: dp.fullName, specialty: dp.specialty, available: dp.available, createdAt: dp.createdAt })) as any);
+    }).catch(() => {
+      const savedDoctors = localStorage.getItem("veterinaria_doctors");
+      setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
+    });
   }, []);
 
   if (!isAdmin) {
@@ -180,8 +195,10 @@ export default function UsersModule() {
     return info ? <Badge className={info.color}>{info.displayName}</Badge> : <Badge>{role}</Badge>;
   };
   
-  // Mostrar TODOS los profesionales/doctores sin filtrar por rol
-  const allDoctors = doctors;
+  // Prefer Firestore doctor profiles; fall back to legacy doctors array
+  const allDoctors = doctoresFirestore.length > 0
+    ? doctoresFirestore
+    : doctors;
 
   const selectedDoctorSchedules = schedules
     .filter(s => s.doctorId === selectedDoctorId)
@@ -202,6 +219,8 @@ export default function UsersModule() {
       email: user.email,
       phone: (user as any).phone || "",
       active: user.active,
+      specialty: doctoresFirestore.find(d => d.userId === user.id)?.specialty ?? "",
+      licenseNumber: doctoresFirestore.find(d => d.userId === user.id)?.licenseNumber ?? "",
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -255,18 +274,34 @@ export default function UsersModule() {
         setUsers(prev => [...prev, newUser]);
 
         if (needsSchedule(formData.role)) {
-          const newDoctor: Doctor = {
-            id: `doc_${newUser.id}`,
+          // Persist doctor profile to Firestore
+          const specialty = formData.specialty.trim() || (formData.role === "veterinario" ? "Medicina General" : "Peluquería");
+          const newDocPerfil = await registrarDoctor({
             userId: newUser.id,
-            name: formData.fullName,
-            specialty: formData.role === "veterinario" ? "Medicina General" : "Peluquería",
+            fullName: formData.fullName,
+            specialty,
+            licenseNumber: formData.licenseNumber.trim() || undefined,
+            phone: formData.phone || undefined,
             available: true,
-            createdAt: new Date(),
-          };
-          setDoctors(prev => [...prev, newDoctor]);
-          toast.success("Usuario creado y perfil de profesional generado");
+          }, currentUser?.id || "1");
+          setDoctoresFirestore(prev => [...prev, newDocPerfil]);
+          setDoctors(prev => [...prev, { id: newDocPerfil.id, userId: newUser.id, name: formData.fullName, specialty, available: true, createdAt: new Date() } as any]);
+          toast.success("Usuario creado y perfil de profesional registrado en Firestore");
         } else {
           toast.success("Usuario creado exitosamente");
+        }
+
+        // Update specialty/licenseNumber if editing an existing professional
+        if (isEditing && selectedUser && needsSchedule(formData.role as RoleType)) {
+          const existingDoc = doctoresFirestore.find(d => d.userId === selectedUser.id);
+          if (existingDoc) {
+            await modificarDoctor(existingDoc.id, {
+              fullName: formData.fullName,
+              specialty: formData.specialty.trim() || existingDoc.specialty,
+              licenseNumber: formData.licenseNumber.trim() || undefined,
+            }, currentUser?.id);
+            setDoctoresFirestore(prev => prev.map(d => d.id === existingDoc.id ? { ...d, fullName: formData.fullName, specialty: formData.specialty.trim() || d.specialty, licenseNumber: formData.licenseNumber.trim() || d.licenseNumber } : d));
+          }
         }
       }
       handleCancelUser();
@@ -276,7 +311,7 @@ export default function UsersModule() {
   };
 
   const handleCancelUser = () => {
-    setFormData({ username: "", password: "", fullName: "", role: "recepcionista", email: "", phone: "", active: true });
+    setFormData({ username: "", password: "", fullName: "", role: "recepcionista", email: "", phone: "", active: true, specialty: "", licenseNumber: "" });
     setSelectedUser(null);
     setIsEditing(false);
     setShowPassword(false);
@@ -466,6 +501,37 @@ export default function UsersModule() {
                   </div>
                 </div>
               </div>
+
+              {/* Perfil de Profesional (solo veterinario/peluquero) */}
+              {needsSchedule(formData.role) && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 space-y-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Stethoscope className="h-4 w-4 text-blue-600" />
+                    <span className="text-sm font-semibold text-blue-800">Perfil del Profesional</span>
+                    <span className="text-xs text-blue-600">(se guarda en Firestore)</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="specialty">Especialidad / Profesión</Label>
+                      <Input
+                        id="specialty"
+                        value={formData.specialty}
+                        onChange={(e) => setFormData(p => ({ ...p, specialty: e.target.value }))}
+                        placeholder={formData.role === "veterinario" ? "Ej: Medicina General, Cirugía..." : "Ej: Peluquería Canina"}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="licenseNumber">Número de Matrícula (opcional)</Label>
+                      <Input
+                        id="licenseNumber"
+                        value={formData.licenseNumber}
+                        onChange={(e) => setFormData(p => ({ ...p, licenseNumber: e.target.value }))}
+                        placeholder="Ej: MP 12345"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Permisos por rol (informativo) */}
               <div className="rounded-lg border border-orange-200 overflow-hidden">

@@ -12,6 +12,9 @@ import {
 } from "../../services/historialService";
 import { traerClientes } from "../../services/clienteService";
 import { traerMascotas } from "../../services/mascotaService";
+import { traerTiposEvento, traerVacunasPorEspecie } from "../../services/parametrosService";
+import { traerDoctores } from "../../services/doctorService";
+import { TipoEvento, VacunaParametro, DoctorPerfil } from "../../types";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -28,31 +31,28 @@ import {
   FileText, Eye, Download, Calendar as CalendarIcon, Plus, Upload, X,
   File, Image as ImageIcon, FileType, Thermometer, Scale,
   Stethoscope, Pill, ClipboardList, AlertCircle, Mail, CheckSquare, Square, Send,
-  FileSpreadsheet, Skull, AlertTriangle
+  FileSpreadsheet, Skull, AlertTriangle, Syringe
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
 
-// Solo tipos de eventos clínicos (sin peluquería ni guardería)
-const CLINICAL_EVENT_TYPES = [
-  { value: "Consulta médica", label: "Consulta médica", color: "bg-blue-100 text-blue-800" },
-  { value: "Vacuna", label: "Vacuna / Inmunización", color: "bg-green-100 text-green-800" },
-  { value: "Cirugía", label: "Cirugía", color: "bg-red-100 text-red-800" },
-  { value: "Análisis clínico", label: "Análisis clínico / Laboratorio", color: "bg-purple-100 text-purple-800" },
-  { value: "Radiografía", label: "Radiografía", color: "bg-indigo-100 text-indigo-800" },
-  { value: "Tomografía", label: "Tomografía (TAC)", color: "bg-pink-100 text-pink-800" },
-  { value: "Ecografía", label: "Ecografía", color: "bg-cyan-100 text-cyan-800" },
-  { value: "Desparasitación", label: "Desparasitación", color: "bg-yellow-100 text-yellow-800" },
-  { value: "Control", label: "Control / Seguimiento", color: "bg-teal-100 text-teal-800" },
-  { value: "Emergencia", label: "Emergencia / Urgencia", color: "bg-red-200 text-red-900" },
-  { value: "Internación", label: "Internación", color: "bg-orange-100 text-orange-800" },
-  { value: "Otro", label: "Otro procedimiento clínico", color: "bg-gray-100 text-gray-700" },
+// Static fallback event types (used when Firebase is not configured)
+const CLINICAL_EVENT_TYPES_FALLBACK = [
+  { value: "Consulta médica",   label: "Consulta médica",              color: "bg-blue-100 text-blue-800",    requiresVaccineTracking: false },
+  { value: "Vacuna",            label: "Vacuna / Inmunización",        color: "bg-green-100 text-green-800",  requiresVaccineTracking: true  },
+  { value: "Cirugía",           label: "Cirugía",                      color: "bg-red-100 text-red-800",      requiresVaccineTracking: false },
+  { value: "Análisis clínico",  label: "Análisis clínico / Lab.",      color: "bg-purple-100 text-purple-800",requiresVaccineTracking: false },
+  { value: "Radiografía",       label: "Radiografía",                  color: "bg-indigo-100 text-indigo-800",requiresVaccineTracking: false },
+  { value: "Tomografía",        label: "Tomografía (TAC)",             color: "bg-pink-100 text-pink-800",    requiresVaccineTracking: false },
+  { value: "Ecografía",         label: "Ecografía",                    color: "bg-cyan-100 text-cyan-800",    requiresVaccineTracking: false },
+  { value: "Desparasitación",   label: "Desparasitación",              color: "bg-yellow-100 text-yellow-800",requiresVaccineTracking: false },
+  { value: "Control",           label: "Control / Seguimiento",        color: "bg-teal-100 text-teal-800",    requiresVaccineTracking: false },
+  { value: "Emergencia",        label: "Emergencia / Urgencia",        color: "bg-red-200 text-red-900",      requiresVaccineTracking: false },
+  { value: "Internación",       label: "Internación",                  color: "bg-orange-100 text-orange-800",requiresVaccineTracking: false },
+  { value: "Otro",              label: "Otro procedimiento",           color: "bg-gray-100 text-gray-700",    requiresVaccineTracking: false },
 ];
-
-const getEventColor = (eventType: string) =>
-  CLINICAL_EVENT_TYPES.find(e => e.value === eventType)?.color || "bg-gray-100 text-gray-700";
 
 export default function MedicalHistoryModule() {
   const { user, hasPermission } = useAuth();
@@ -75,6 +75,13 @@ export default function MedicalHistoryModule() {
     deceasedReason: "",
     deceasedNotes: ""
   });
+
+  // Dynamic parametric data
+  const [tiposEvento, setTiposEvento] = useState<TipoEvento[]>([]);
+  const [doctoresPerfil, setDoctoresPerfil] = useState<DoctorPerfil[]>([]);
+  const [vacunasEspecie, setVacunasEspecie] = useState<VacunaParametro[]>([]);
+  const [selectedVacunaId, setSelectedVacunaId] = useState<string>("");
+  const [proximoRefuerzo, setProximoRefuerzo] = useState<Date | null>(null);
 
   const [addForm, setAddForm] = useState({
     date: new Date(),
@@ -102,6 +109,9 @@ export default function MedicalHistoryModule() {
       const saved = localStorage.getItem("veterinaria_pets");
       setPets(saved ? JSON.parse(saved) : initialPets);
     });
+    // Load parametric data
+    traerTiposEvento().then(setTiposEvento).catch(() => setTiposEvento([]));
+    traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
   }, []);
 
   // ── Helpers ──────────────────────────────────────
@@ -134,6 +144,47 @@ export default function MedicalHistoryModule() {
       .filter(r => r.petId === selectedPetId)
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [records, selectedPetId]);
+
+  // ── Dynamic type helpers ──────────────────────────────────────
+  const effectiveTipos = tiposEvento.length > 0
+    ? tiposEvento.map(t => ({ value: t.name, label: t.name, color: t.color, requiresVaccineTracking: t.requiresVaccineTracking ?? false }))
+    : CLINICAL_EVENT_TYPES_FALLBACK;
+
+  const getEventColor = (eventType: string) =>
+    effectiveTipos.find(e => e.value === eventType)?.color || "bg-gray-100 text-gray-700";
+
+  const isVaccinationEvent = (eventType: string) =>
+    effectiveTipos.find(e => e.value === eventType)?.requiresVaccineTracking ?? false;
+
+  // Load vaccines when pet species changes and eventType is a vaccination
+  const handleEventTypeChange = async (value: string) => {
+    setAddForm(p => ({ ...p, eventType: value }));
+    setSelectedVacunaId("");
+    setProximoRefuerzo(null);
+    const isVaccine = effectiveTipos.find(t => t.value === value)?.requiresVaccineTracking;
+    if (isVaccine && selectedPetId) {
+      const pet = pets.find(p => p.id === selectedPetId) as any;
+      const especieId = pet?.speciesId ?? pet?.breedId?.split("_")[0] ?? "";
+      if (especieId) {
+        traerVacunasPorEspecie(especieId).then(setVacunasEspecie).catch(() => setVacunasEspecie([]));
+      }
+    }
+  };
+
+  const handleVacunaSelect = (vacunaId: string) => {
+    setSelectedVacunaId(vacunaId);
+    const vacuna = vacunasEspecie.find(v => v.id === vacunaId);
+    if (vacuna) {
+      const refuerzo = new Date(addForm.date);
+      refuerzo.setDate(refuerzo.getDate() + vacuna.periodicidadDias);
+      setProximoRefuerzo(refuerzo);
+      // Pre-fill notes with vaccine name
+      setAddForm(p => ({ ...p, notes: p.notes || `Vacuna: ${vacuna.nombreVacuna}` }));
+    }
+  };
+
+  // Vaccine tracking table: records of type vaccination with nextAppointmentDate
+  const vaccinationHistory = petHistory.filter(r => isVaccinationEvent(r.eventType));
 
   // ── Archivos ──────────────────────────────────────
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -198,6 +249,9 @@ export default function MedicalHistoryModule() {
     setAddForm({ date: new Date(), eventType: "", professionalId: "", weight: "", temperature: "", description: "", diagnosis: "", treatment: "", medication: "", notes: "" });
     setUploadedFiles([]);
     setSendEmail(false);
+    setSelectedVacunaId("");
+    setProximoRefuerzo(null);
+    setVacunasEspecie([]);
   };
 
   // ── Guardar registro ──────────────────────────────────────
@@ -231,6 +285,7 @@ export default function MedicalHistoryModule() {
         treatment: addForm.treatment || undefined,
         medication: addForm.medication || undefined,
         notes: addForm.notes || undefined,
+        nextAppointmentDate: proximoRefuerzo ? proximoRefuerzo.toISOString() : undefined,
       };
 
       // registrarHistorial — Gestor Alta Historial
@@ -640,6 +695,63 @@ export default function MedicalHistoryModule() {
               )}
             </CardContent>
           </Card>
+
+          {/* ── Seguimiento de Vacunas ─────────────────────────────────── */}
+          {selectedPetId && vaccinationHistory.length > 0 && (
+            <Card className="border-green-200 shadow-sm mt-4">
+              <CardHeader className="bg-gradient-to-r from-green-50 to-white py-3 px-4">
+                <CardTitle className="text-green-800 text-base flex items-center gap-2">
+                  <Syringe className="h-4 w-4" /> Seguimiento de Vacunación
+                </CardTitle>
+                <CardDescription className="text-xs">Vacunas aplicadas y próximos refuerzos</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-green-100 bg-green-50/50">
+                        <th className="text-left py-2 px-4 text-gray-600 font-medium">Vacuna / Tipo</th>
+                        <th className="text-center py-2 px-4 text-gray-600 font-medium">Aplicada</th>
+                        <th className="text-center py-2 px-4 text-gray-600 font-medium">Próximo Refuerzo</th>
+                        <th className="text-center py-2 px-4 text-gray-600 font-medium">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vaccinationHistory.map(r => {
+                        const refuerzo = r.nextAppointmentDate ? new Date(r.nextAppointmentDate) : null;
+                        const today = new Date();
+                        const status = !refuerzo ? "sin_fecha"
+                          : refuerzo < today ? "vencida"
+                          : refuerzo <= new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000) ? "proxima"
+                          : "al_dia";
+                        const statusBadge: Record<string, string> = {
+                          vencida: "bg-red-100 text-red-800",
+                          proxima: "bg-yellow-100 text-yellow-800",
+                          al_dia: "bg-green-100 text-green-800",
+                          sin_fecha: "bg-gray-100 text-gray-600",
+                        };
+                        const statusLabel: Record<string, string> = {
+                          vencida: "Vencida", proxima: "Próxima", al_dia: "Al día", sin_fecha: "Sin fecha",
+                        };
+                        return (
+                          <tr key={r.id} className="border-b border-green-50 hover:bg-green-50/30">
+                            <td className="py-2 px-4 font-medium text-gray-800">{r.eventType}{r.notes ? ` — ${r.notes.split("\n")[0]}` : ""}</td>
+                            <td className="py-2 px-4 text-center text-gray-600">{format(new Date(r.date), "dd/MM/yyyy")}</td>
+                            <td className="py-2 px-4 text-center">{refuerzo ? format(refuerzo, "dd/MM/yyyy") : "—"}</td>
+                            <td className="py-2 px-4 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge[status]}`}>
+                                {statusLabel[status]}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* ══ AGREGAR ════════════════════════════════ */}
@@ -706,11 +818,13 @@ export default function MedicalHistoryModule() {
                       {/* Tipo de evento */}
                       <div className="space-y-2">
                         <Label>Tipo de Evento Clínico <span className="text-red-500">*</span></Label>
-                        <Select value={addForm.eventType} onValueChange={(v) => setAddForm(p => ({ ...p, eventType: v }))}>
+                        <Select value={addForm.eventType} onValueChange={handleEventTypeChange}>
                           <SelectTrigger><SelectValue placeholder="Seleccione tipo" /></SelectTrigger>
                           <SelectContent>
-                            {CLINICAL_EVENT_TYPES.map(et => (
-                              <SelectItem key={et.value} value={et.value}>{et.label}</SelectItem>
+                            {effectiveTipos.map(et => (
+                              <SelectItem key={et.value} value={et.value}>
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs mr-1 ${et.color}`}>{et.label}</span>
+                              </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -722,14 +836,51 @@ export default function MedicalHistoryModule() {
                         <Select value={addForm.professionalId} onValueChange={(v) => setAddForm(p => ({ ...p, professionalId: v }))}>
                           <SelectTrigger><SelectValue placeholder="Seleccione profesional" /></SelectTrigger>
                           <SelectContent>
-                            {doctors.map(d => (
-                              <SelectItem key={d.id} value={d.id}>{d.name} — {d.specialty}</SelectItem>
+                            {(doctoresPerfil.length > 0 ? doctoresPerfil : doctors).map(d => (
+                              <SelectItem key={d.id} value={d.id}>
+                                {(d as any).fullName ?? (d as any).name} — {(d as any).specialty}
+                              </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                       </div>
                     </div>
                   </div>
+
+                  {/* ── SECCIÓN 1b: Seguimiento de Vacuna (solo si es evento de vacunación) ── */}
+                  {isVaccinationEvent(addForm.eventType) && (
+                    <div className="p-4 bg-green-50 rounded-lg border border-green-200 space-y-3">
+                      <h3 className="text-sm font-semibold text-green-800 flex items-center gap-2">
+                        <Syringe className="h-4 w-4" /> Árbol de Vacunación
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <Label className="text-green-800">Vacuna aplicada</Label>
+                          <Select value={selectedVacunaId} onValueChange={handleVacunaSelect}>
+                            <SelectTrigger className="border-green-300"><SelectValue placeholder="Seleccione vacuna" /></SelectTrigger>
+                            <SelectContent>
+                              {vacunasEspecie.length === 0 && <SelectItem value="_none" disabled>Sin vacunas para esta especie</SelectItem>}
+                              {vacunasEspecie.map(v => (
+                                <SelectItem key={v.id} value={v.id}>
+                                  {v.nombreVacuna} ({v.dosis} dosis · cada {v.periodicidadDias >= 365 ? `${Math.round(v.periodicidadDias/365)} año${Math.round(v.periodicidadDias/365)!==1?"s":""}` : `${v.periodicidadDias} días`})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {proximoRefuerzo && (
+                          <div className="space-y-2">
+                            <Label className="text-green-800">Próximo refuerzo (calculado)</Label>
+                            <div className="flex items-center gap-2 p-2.5 bg-white rounded border border-green-300 text-sm text-green-800">
+                              <CalendarIcon className="h-4 w-4 text-green-600" />
+                              <span className="font-medium">{format(proximoRefuerzo, "dd/MM/yyyy")}</span>
+                              <span className="text-xs text-gray-500">— se guardará como próximo turno</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* ── SECCIÓN 2: Signos vitales (solo peso y temp) ── */}
                   <div>

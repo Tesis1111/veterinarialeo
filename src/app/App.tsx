@@ -18,6 +18,7 @@ import AccessibilityButton from "./components/AccessibilityButton";
 import InstallPrompt from "./components/InstallPrompt";
 import OfflineIndicator from "./components/OfflineIndicator";
 import AdminGuard from "./components/AdminGuard";
+import ParametrosModule from "./components/modules/ParametrosModule";
 import { registerServiceWorker } from "./utils/registerServiceWorker";
 import { PawPrint } from "lucide-react";
 
@@ -36,7 +37,8 @@ type ModuleType =
   | "audit"
   | "reports"
   | "profile"
-  | "business_hours";
+  | "business_hours"
+  | "parametros";
 
 // ── Full-screen loading spinner ───────────────────────────────────────────
 
@@ -117,6 +119,15 @@ function AppContent() {
             onBack={() => setActiveModule("dashboard")}
           >
             <AuditModule />
+          </AdminGuard>
+        )}
+
+        {activeModule === "parametros" && (
+          <AdminGuard
+            requiredRole="admin"
+            onBack={() => setActiveModule("dashboard")}
+          >
+            <ParametrosModule />
           </AdminGuard>
         )}
 
