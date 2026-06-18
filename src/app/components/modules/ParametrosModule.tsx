@@ -2,10 +2,10 @@ import { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { EspecieParametro, RazaParametro, TipoEvento, VacunaParametro } from "../../types";
 import {
-  traerEspecies, registrarEspecie, modificarEspecie, eliminarEspecie,
-  traerTodasLasRazas, registrarRaza, modificarRaza, eliminarRaza,
-  traerTiposEvento, registrarTipoEvento, modificarTipoEvento, eliminarTipoEvento,
-  traerTodasLasVacunas, registrarVacuna, modificarVacuna, eliminarVacuna,
+  suscribirEspecies, registrarEspecie, modificarEspecie, eliminarEspecie,
+  suscribirRazas, registrarRaza, modificarRaza, eliminarRaza,
+  suscribirTiposEvento, registrarTipoEvento, modificarTipoEvento, eliminarTipoEvento,
+  suscribirVacunas, registrarVacuna, modificarVacuna, eliminarVacuna,
 } from "../../services/parametrosService";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -72,12 +72,20 @@ export default function ParametrosModule() {
   const [deleteVacunaId, setDeleteVacunaId] = useState<string | null>(null);
   const [vacunaEspecieFilter, setVacunaEspecieFilter] = useState<string>("all");
 
-  // ── Load data ───────────────────────────────────────────────────────────────
+  // ── Real-time subscriptions via onSnapshot ──────────────────────────────────
+  // Esta es la clave para que los datos persistan: onSnapshot mantiene sincronía
+  // con Firestore y los cambios se reflejan inmediatamente sin necesidad de recargar.
   useEffect(() => {
-    traerEspecies().then(setEspecies).catch(() => toast.error("Error cargando especies"));
-    traerTodasLasRazas().then(setRazas).catch(() => {});
-    traerTiposEvento().then(setTiposEvento).catch(() => {});
-    traerTodasLasVacunas().then(setVacunas).catch(() => {});
+    const unsubEspecies = suscribirEspecies(setEspecies, () => toast.error("Error cargando especies desde Firebase"));
+    const unsubRazas    = suscribirRazas(setRazas);
+    const unsubTipos    = suscribirTiposEvento(setTiposEvento);
+    const unsubVacunas  = suscribirVacunas(setVacunas);
+    return () => {
+      unsubEspecies();
+      unsubRazas();
+      unsubTipos();
+      unsubVacunas();
+    };
   }, []);
 
   if (!isAdmin) {
@@ -116,14 +124,13 @@ export default function ParametrosModule() {
     if (!especieForm.name.trim()) { toast.error("El nombre es obligatorio"); return; }
     try {
       if (editingEspecie) {
-        await modificarEspecie(editingEspecie.id, { name: especieForm.name.trim(), icon: especieForm.icon || undefined, description: especieForm.description || undefined });
-        setEspecies(prev => prev.map(e => e.id === editingEspecie.id ? { ...e, ...especieForm, name: especieForm.name.trim() } : e));
+        await modificarEspecie(editingEspecie.id, { name: especieForm.name.trim(), icon: especieForm.icon || "🐾", description: especieForm.description || undefined });
         toast.success("Especie actualizada");
       } else {
-        const nueva = await registrarEspecie({ name: especieForm.name.trim(), icon: especieForm.icon || undefined, description: especieForm.description || undefined, active: true }, user!.id);
-        setEspecies(prev => [...prev, nueva]);
+        await registrarEspecie({ name: especieForm.name.trim(), icon: especieForm.icon || "🐾", description: especieForm.description || undefined, active: true }, user!.id);
         toast.success("Especie creada");
       }
+      // onSnapshot actualiza la lista automáticamente — no necesitamos setEspecies manual
       setEspecieDialogOpen(false);
     } catch { toast.error("Error al guardar la especie"); }
   };
@@ -138,8 +145,7 @@ export default function ParametrosModule() {
     }
     try {
       await eliminarEspecie(deleteEspecieId);
-      setEspecies(prev => prev.filter(e => e.id !== deleteEspecieId));
-      toast.success("Especie eliminada");
+      toast.success("Especie eliminada"); // onSnapshot actualiza la lista
     } catch { toast.error("Error al eliminar la especie"); }
     setDeleteEspecieId(null);
   };
@@ -165,13 +171,12 @@ export default function ParametrosModule() {
     try {
       if (editingRaza) {
         await modificarRaza(editingRaza.id, { name: razaForm.name.trim(), description: razaForm.description || undefined });
-        setRazas(prev => prev.map(r => r.id === editingRaza.id ? { ...r, name: razaForm.name.trim(), description: razaForm.description || undefined } : r));
         toast.success("Raza actualizada");
       } else {
-        const nueva = await registrarRaza({ name: razaForm.name.trim(), especieId: razaForm.especieId, description: razaForm.description || undefined, active: true }, user!.id);
-        setRazas(prev => [...prev, nueva]);
+        await registrarRaza({ name: razaForm.name.trim(), especieId: razaForm.especieId, description: razaForm.description || undefined, active: true }, user!.id);
         toast.success("Raza creada");
       }
+      // onSnapshot actualiza la lista automáticamente
       setRazaDialogOpen(false);
     } catch { toast.error("Error al guardar la raza"); }
   };
@@ -180,7 +185,6 @@ export default function ParametrosModule() {
     if (!deleteRazaId) return;
     try {
       await eliminarRaza(deleteRazaId);
-      setRazas(prev => prev.filter(r => r.id !== deleteRazaId));
       toast.success("Raza eliminada");
     } catch { toast.error("Error al eliminar la raza"); }
     setDeleteRazaId(null);
@@ -207,13 +211,12 @@ export default function ParametrosModule() {
     try {
       if (editingTipo) {
         await modificarTipoEvento(editingTipo.id, { name: tipoForm.name.trim(), color: tipoForm.color, requiresVaccineTracking: tipoForm.requiresVaccineTracking });
-        setTiposEvento(prev => prev.map(t => t.id === editingTipo.id ? { ...t, ...tipoForm, name: tipoForm.name.trim() } : t));
         toast.success("Tipo de evento actualizado");
       } else {
-        const nuevo = await registrarTipoEvento({ name: tipoForm.name.trim(), color: tipoForm.color, requiresVaccineTracking: tipoForm.requiresVaccineTracking, active: true }, user!.id);
-        setTiposEvento(prev => [...prev, nuevo]);
+        await registrarTipoEvento({ name: tipoForm.name.trim(), color: tipoForm.color, requiresVaccineTracking: tipoForm.requiresVaccineTracking, active: true }, user!.id);
         toast.success("Tipo de evento creado");
       }
+      // onSnapshot actualiza la lista automáticamente
       setTipoDialogOpen(false);
     } catch { toast.error("Error al guardar el tipo de evento"); }
   };
@@ -222,7 +225,6 @@ export default function ParametrosModule() {
     if (!deleteTipoId) return;
     try {
       await eliminarTipoEvento(deleteTipoId);
-      setTiposEvento(prev => prev.filter(t => t.id !== deleteTipoId));
       toast.success("Tipo de evento eliminado");
     } catch { toast.error("Error al eliminar el tipo de evento"); }
     setDeleteTipoId(null);
@@ -251,13 +253,12 @@ export default function ParametrosModule() {
     try {
       if (editingVacuna) {
         await modificarVacuna(editingVacuna.id, { ...vacunaForm, nombreVacuna: vacunaForm.nombreVacuna.trim(), especieName: especie?.name });
-        setVacunas(prev => prev.map(v => v.id === editingVacuna.id ? { ...v, ...vacunaForm, nombreVacuna: vacunaForm.nombreVacuna.trim(), especieName: especie?.name } : v));
         toast.success("Vacuna actualizada");
       } else {
-        const nueva = await registrarVacuna({ ...vacunaForm, nombreVacuna: vacunaForm.nombreVacuna.trim(), especieName: especie?.name, active: true }, user!.id);
-        setVacunas(prev => [...prev, nueva]);
+        await registrarVacuna({ ...vacunaForm, nombreVacuna: vacunaForm.nombreVacuna.trim(), especieName: especie?.name, active: true }, user!.id);
         toast.success("Vacuna creada");
       }
+      // onSnapshot actualiza la lista automáticamente
       setVacunaDialogOpen(false);
     } catch { toast.error("Error al guardar la vacuna"); }
   };
@@ -266,7 +267,6 @@ export default function ParametrosModule() {
     if (!deleteVacunaId) return;
     try {
       await eliminarVacuna(deleteVacunaId);
-      setVacunas(prev => prev.filter(v => v.id !== deleteVacunaId));
       toast.success("Vacuna eliminada");
     } catch { toast.error("Error al eliminar la vacuna"); }
     setDeleteVacunaId(null);

@@ -131,17 +131,24 @@ export async function registrarUsuario(
     await updateProfile(cred.user, { displayName: data.fullName });
 
     // 3. Crear documento en Firestore
-    const { password: _pw, ...safeData } = data; // no guardar contraseña
+    const { password: _pw, ...safeData } = data as any; // no guardar contraseña
     const permissions: PermissionName[] = ROLE_PERMISSIONS[data.roleId] ?? [];
 
     const firestoreDoc: Record<string, unknown> = {
       ...safeData,
       uid: cred.user.uid,
-      roleName: data.roleId,          // roleName == roleId (ej: "admin")
+      // roleName MUST be lowercase to match AuthContext role checks
+      roleName: data.roleId.toLowerCase(),
+      roleId: data.roleId.toLowerCase(),
       permissions,
       active: data.active ?? true,
       createdBy,
       createdAt: serverTimestamp(),
+      // Extra profile fields
+      nombre: safeData.nombre || data.fullName.split(" ")[0],
+      apellido: safeData.apellido || data.fullName.split(" ").slice(1).join(" "),
+      ...(safeData.sexo && { sexo: safeData.sexo }),
+      ...(safeData.domicilio && { domicilio: safeData.domicilio }),
     };
 
     await setDoc(doc(db!, COL, cred.user.uid), firestoreDoc);
@@ -160,14 +167,22 @@ export async function registrarUsuario(
  */
 export async function modificarUsuario(
   id: string,
-  data: Partial<UserFormData>,
+  data: Partial<UserFormData> & { nombre?: string; apellido?: string; sexo?: string; domicilio?: string },
   updatedBy: string
 ): Promise<User> {
   requireFirebase("modificarUsuario");
 
   const { password: _pw, ...safeData } = data; // contraseña nunca en Firestore
+
+  // Ensure roleName stays in sync with roleId (always lowercase)
+  const updatePayload: Record<string, any> = { ...safeData, updatedBy, updatedAt: serverTimestamp() };
+  if (safeData.roleId) {
+    updatePayload.roleName = safeData.roleId; // must match AuthContext role check
+    updatePayload.permissions = ROLE_PERMISSIONS[safeData.roleId] ?? [];
+  }
+
   const ref = doc(db!, COL, id);
-  await updateDoc(ref, { ...safeData, updatedBy, updatedAt: serverTimestamp() });
+  await updateDoc(ref, updatePayload);
   const snap = await getDoc(ref);
   return toUser(id, snap.data() as Record<string, any>);
 }

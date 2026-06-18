@@ -28,7 +28,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Badge } from "../ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../ui/alert-dialog";
-import { Calendar as CalendarIcon, Clock, PawPrint, X, Save, AlertTriangle, Bell, CheckCircle2, FileSpreadsheet, FileText } from "lucide-react";
+import { Calendar as CalendarIcon, Clock, PawPrint, X, Save, AlertTriangle, Bell, CheckCircle2, FileSpreadsheet, FileText, XCircle, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
 import { format, isSameDay, isBefore, differenceInHours, startOfDay, addDays } from "date-fns";
 import { es } from "date-fns/locale";
@@ -663,7 +663,57 @@ export default function AppointmentsModule() {
                                   </span>
                                 </div>
                               )}
+                              {/* Motivos de consulta */}
+                              {(apt as any).tiposEvento?.length > 0 && tiposEvento.length > 0 && (
+                                <div className="flex items-start flex-wrap gap-1 pt-1">
+                                  <span className="font-medium text-gray-600 min-w-[90px] text-xs mt-0.5">Motivos:</span>
+                                  {(apt as any).tiposEvento.map((tid: string) => {
+                                    const t = tiposEvento.find(t => t.id === tid);
+                                    return t ? <span key={tid} className={`px-2 py-0.5 rounded-full text-xs ${t.color}`}>{t.name}</span> : null;
+                                  })}
+                                </div>
+                              )}
                             </div>
+
+                            {/* ── Botones de Estado ─────────────────────── */}
+                            {apt.status !== "Cancelado" && apt.status !== "Completado" && hasPermission("manage_appointments") && (
+                              <div className="mt-3 pt-3 border-t border-orange-100 flex gap-2 flex-wrap">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="border-green-300 text-green-700 hover:bg-green-50 text-xs h-7"
+                                  onClick={() => handleStatusChange(apt.id, "Completado")}
+                                >
+                                  <CheckCircle className="h-3.5 w-3.5 mr-1" />
+                                  Turno finalizado
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="border-red-300 text-red-700 hover:bg-red-50 text-xs h-7"
+                                  onClick={() => { setSelectedAppointment(apt); setDeleteDialogOpen(true); }}
+                                >
+                                  <XCircle className="h-3.5 w-3.5 mr-1" />
+                                  Cancelar turno
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="text-orange-600 hover:bg-orange-50 text-xs h-7"
+                                  onClick={() => { setSelectedAppointment(apt); setIsEditing(true); setActiveTab("schedule"); setFormData({ type: apt.type as AppointmentType, clientId: apt.clientId, petId: apt.petId, doctorId: apt.doctorId || "", eventoTipoId: (apt as any).tiposEvento?.join(",") || "", date: new Date(apt.date), startTime: apt.startTime || "", endTime: apt.endTime || "", dateFrom: apt.dateFrom ? new Date(apt.dateFrom) : undefined, dateTo: apt.dateTo ? new Date(apt.dateTo) : undefined, reason: apt.reason || "", notes: apt.notes || "" }); }}
+                                >
+                                  <Save className="h-3.5 w-3.5 mr-1" />
+                                  Editar
+                                </Button>
+                              </div>
+                            )}
+                            {(apt.status === "Cancelado" || apt.status === "Completado") && (
+                              <div className="mt-2 pt-2 border-t border-gray-100">
+                                <span className={`text-xs px-2 py-0.5 rounded-full ${apt.status === "Cancelado" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
+                                  {apt.status === "Cancelado" ? "Turno cancelado" : "Turno completado"}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         );
                       })}

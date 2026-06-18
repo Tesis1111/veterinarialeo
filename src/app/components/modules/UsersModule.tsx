@@ -138,10 +138,21 @@ export default function UsersModule() {
   const [deleteUserDialogOpen, setDeleteUserDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [formData, setFormData] = useState({
-    username: "", password: "", fullName: "", role: "recepcionista" as RoleType,
-    email: "", phone: "", active: true,
+    username: "",
+    password: "",
+    // Nombre y apellido separados (el fullName se arma al guardar)
+    nombre: "",
+    apellido: "",
+    fullName: "",
+    role: "recepcionista" as RoleType,
+    email: "",
+    phone: "",
+    sexo: "" as "" | "Masculino" | "Femenino" | "Prefiero no decirlo" | "Otro",
+    domicilio: "",
+    active: true,
     // Doctor profile fields (only used when role = veterinario or peluquero)
-    specialty: "", licenseNumber: "",
+    specialty: "",
+    licenseNumber: "",
   });
 
   // ── Estado horarios ──────────────────────────────────────
@@ -213,11 +224,15 @@ export default function UsersModule() {
     setIsEditing(true);
     setFormData({
       username: user.username,
-      password: (user as any).password || "",
+      password: "",
+      nombre: (user as any).nombre || user.fullName.split(" ")[0] || "",
+      apellido: (user as any).apellido || user.fullName.split(" ").slice(1).join(" ") || "",
       fullName: user.fullName,
-      role: (user as any).role as RoleType,
+      role: (user.roleName ?? user.roleId ?? "recepcionista") as RoleType,
       email: user.email,
-      phone: (user as any).phone || "",
+      phone: user.phone || "",
+      sexo: ((user as any).sexo || "") as any,
+      domicilio: (user as any).domicilio || "",
       active: user.active,
       specialty: doctoresFirestore.find(d => d.userId === user.id)?.specialty ?? "",
       licenseNumber: doctoresFirestore.find(d => d.userId === user.id)?.licenseNumber ?? "",
@@ -226,10 +241,16 @@ export default function UsersModule() {
   };
 
   const handleSaveUser = async () => {
-    if (!formData.username || !formData.fullName || !formData.email) {
-      toast.error("Complete todos los campos obligatorios");
-      return;
-    }
+    // Build fullName from nombre + apellido
+    const nombre = formData.nombre.trim();
+    const apellido = formData.apellido.trim();
+    if (!nombre) { toast.error("El nombre es obligatorio"); return; }
+    if (!formData.email) { toast.error("El email es obligatorio"); return; }
+    if (!formData.role) { toast.error("El perfil/rol es obligatorio"); return; }
+    const fullName = apellido ? `${nombre} ${apellido}` : nombre;
+    const username = formData.username.trim() || formData.email.split("@")[0];
+    formData.fullName = fullName;
+    formData.username = username;
 
     // validarUnicidadUsuario — Gestor Usuarios y Permisos
     const uniqueCheck = await validarUnicidadUsuario(formData.username, formData.email, selectedUser?.id);
@@ -247,7 +268,12 @@ export default function UsersModule() {
           phone: formData.phone,
           active: formData.active,
           roleId: formData.role,
-        }, currentUser?.id || "1");
+          // Extra fields stored in Firestore
+          ...(formData.sexo && { sexo: formData.sexo }),
+          ...(formData.domicilio && { domicilio: formData.domicilio }),
+          nombre: formData.nombre.trim(),
+          apellido: formData.apellido.trim(),
+        } as any, currentUser?.id || "1");
 
         // If the role changed, use the secure role-assignment path
         if (selectedUser.roleName !== formData.role && currentUser) {
@@ -270,8 +296,12 @@ export default function UsersModule() {
           email: formData.email,
           phone: formData.phone,
           active: formData.active,
-          roleId: formData.role,
-        }, currentUser?.id || "1");
+          roleId: formData.role,       // always lowercase: admin/veterinario/recepcionista/peluquero
+          nombre: formData.nombre.trim(),
+          apellido: formData.apellido.trim(),
+          sexo: formData.sexo || undefined,
+          domicilio: formData.domicilio || undefined,
+        } as any, currentUser?.id || "1");
         setUsers(prev => [...prev, newUser]);
 
         if (needsSchedule(formData.role)) {
@@ -312,7 +342,7 @@ export default function UsersModule() {
   };
 
   const handleCancelUser = () => {
-    setFormData({ username: "", password: "", fullName: "", role: "recepcionista", email: "", phone: "", active: true, specialty: "", licenseNumber: "" });
+    setFormData({ username: "", password: "", nombre: "", apellido: "", fullName: "", role: "recepcionista", email: "", phone: "", sexo: "", domicilio: "", active: true, specialty: "", licenseNumber: "" });
     setSelectedUser(null);
     setIsEditing(false);
     setShowPassword(false);
@@ -409,28 +439,92 @@ export default function UsersModule() {
             </CardHeader>
             <CardContent className="pt-6 space-y-6">
 
-              {/* Campos básicos */}
+              {/* Campos requeridos */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                {/* Nombre */}
                 <div className="space-y-2">
-                  <Label htmlFor="username">Nombre de Usuario <span className="text-red-500">*</span></Label>
+                  <Label htmlFor="nombre">Nombre <span className="text-red-500">*</span></Label>
                   <Input
-                    id="username"
-                    value={formData.username}
-                    onChange={(e) => setFormData(p => ({ ...p, username: e.target.value }))}
-                    onKeyDown={(e) => e.key === "Enter" && document.getElementById("password")?.focus()}
-                    placeholder="Ej: jperez"
+                    id="nombre"
+                    value={formData.nombre}
+                    onChange={(e) => setFormData(p => ({ ...p, nombre: e.target.value }))}
+                    placeholder="Ej: Juan"
+                    autoFocus
                   />
                 </div>
 
+                {/* Apellido */}
                 <div className="space-y-2">
-                  <Label htmlFor="password">Contraseña <span className="text-red-500">*</span></Label>
+                  <Label htmlFor="apellido">Apellido <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="apellido"
+                    value={formData.apellido}
+                    onChange={(e) => setFormData(p => ({ ...p, apellido: e.target.value }))}
+                    placeholder="Ej: Pérez"
+                  />
+                </div>
+
+                {/* Email */}
+                <div className="space-y-2">
+                  <Label htmlFor="email">Correo electrónico (Mail) <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData(p => ({ ...p, email: e.target.value }))}
+                    placeholder="usuario@veterinarialeo.com"
+                  />
+                </div>
+
+                {/* Teléfono */}
+                <div className="space-y-2">
+                  <Label htmlFor="phone">Teléfono <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="phone"
+                    value={formData.phone}
+                    onChange={(e) => setFormData(p => ({ ...p, phone: e.target.value }))}
+                    placeholder="+54 11 1234-5678"
+                  />
+                </div>
+
+                {/* Sexo */}
+                <div className="space-y-2">
+                  <Label htmlFor="sexo">Sexo <span className="text-red-500">*</span></Label>
+                  <Select value={formData.sexo} onValueChange={(v) => setFormData(p => ({ ...p, sexo: v as any }))}>
+                    <SelectTrigger id="sexo"><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Masculino">Masculino</SelectItem>
+                      <SelectItem value="Femenino">Femenino</SelectItem>
+                      <SelectItem value="Prefiero no decirlo">Prefiero no decirlo</SelectItem>
+                      <SelectItem value="Otro">Otro</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Domicilio */}
+                <div className="space-y-2">
+                  <Label htmlFor="domicilio">Domicilio</Label>
+                  <Input
+                    id="domicilio"
+                    value={formData.domicilio}
+                    onChange={(e) => setFormData(p => ({ ...p, domicilio: e.target.value }))}
+                    placeholder="Ej: Av. Corrientes 1234, CABA"
+                  />
+                </div>
+
+                {/* Contraseña */}
+                <div className="space-y-2">
+                  <Label htmlFor="password">
+                    Contraseña {!isEditing && <span className="text-red-500">*</span>}
+                    {isEditing && <span className="text-xs text-gray-400 font-normal"> (dejar vacío para no cambiar)</span>}
+                  </Label>
                   <div className="flex gap-2">
                     <Input
                       id="password"
                       type={showPassword ? "text" : "password"}
                       value={formData.password}
                       onChange={(e) => setFormData(p => ({ ...p, password: e.target.value }))}
-                      onKeyDown={(e) => e.key === "Enter" && document.getElementById("fullName")?.focus()}
                       placeholder="Mínimo 6 caracteres"
                       minLength={6}
                       className="flex-1"
@@ -441,41 +535,9 @@ export default function UsersModule() {
                   </div>
                 </div>
 
+                {/* Perfil / Rol */}
                 <div className="space-y-2">
-                  <Label htmlFor="fullName">Nombre Completo <span className="text-red-500">*</span></Label>
-                  <Input
-                    id="fullName"
-                    value={formData.fullName}
-                    onChange={(e) => setFormData(p => ({ ...p, fullName: e.target.value }))}
-                    onKeyDown={(e) => e.key === "Enter" && document.getElementById("email")?.focus()}
-                    placeholder="Ej: Juan Pérez"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email <span className="text-red-500">*</span></Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData(p => ({ ...p, email: e.target.value }))}
-                    onKeyDown={(e) => e.key === "Enter" && document.getElementById("phone")?.focus()}
-                    placeholder="usuario@email.com"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Teléfono (opcional)</Label>
-                  <Input
-                    id="phone"
-                    value={formData.phone}
-                    onChange={(e) => setFormData(p => ({ ...p, phone: e.target.value }))}
-                    placeholder="+54 11 1234-5678"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="role">Rol <span className="text-red-500">*</span></Label>
+                  <Label htmlFor="role">Perfil / Rol <span className="text-red-500">*</span></Label>
                   <Select
                     value={formData.role}
                     onValueChange={(v: RoleType) => setFormData(p => ({ ...p, role: v }))}
@@ -488,6 +550,7 @@ export default function UsersModule() {
                       <SelectItem value="peluquero">Peluquero</SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-gray-400">El rol determina los permisos de acceso al sistema.</p>
                 </div>
 
                 <div className="space-y-2">
