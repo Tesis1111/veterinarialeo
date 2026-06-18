@@ -369,7 +369,7 @@ export default function ReportsModule() {
               <span className="text-xs text-gray-400">Mascotas</span>
             </div>
             <p className="text-3xl font-bold text-blue-700">{stats.totalPets}</p>
-            <p className="text-xs text-gray-500 mt-1">{stats.deceasedPets} fallecidas registradas</p>
+            <p className="text-xs text-gray-500 mt-1">{stats.deceasedPets} Bajas registradas</p>
           </CardContent>
         </Card>
 

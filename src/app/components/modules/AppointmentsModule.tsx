@@ -4,7 +4,6 @@ import { useAudit } from "../../context/AuditContext";
 import { Appointment, Client, Pet, AppointmentType, AppointmentStatus, Doctor, DoctorSchedule, TipoEvento, DoctorPerfil } from "../../types";
 import { initialAppointments, initialClients, initialPets, doctors as initialDoctors } from "../../data/mockData";
 import {
-  traerTurnos,
   registrarTurno,
   modificarTurno,
   cancelarTurno,
@@ -14,6 +13,10 @@ import { traerMascotas } from "../../services/mascotaService";
 import { traerTodosLosHorarios } from "../../services/horarioService";
 import { traerTiposEvento } from "../../services/parametrosService";
 import { traerDoctores } from "../../services/doctorService";
+import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
+import {
+  collection, addDoc, updateDoc, doc, onSnapshot, serverTimestamp, Timestamp, query, orderBy,
+} from "firebase/firestore";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -81,27 +84,66 @@ export default function AppointmentsModule() {
   });
 
   useEffect(() => {
-    traerTurnos().then(setAppointments).catch(() => {
+    // ── Real-time subscription to turnos via onSnapshot ────────────────
+    if (FIREBASE_CONFIGURED && db) {
+      const q = query(collection(db, "turnos"), orderBy("date", "desc"));
+      const unsub = onSnapshot(q, (snap) => {
+        const appts = snap.docs.map(d => {
+          const data = d.data();
+          return {
+            id: d.id,
+            clientId: data.clientId ?? data.clienteId ?? "",
+            petId: data.petId ?? data.mascotaId ?? "",
+            serviceId: data.serviceId ?? data.type ?? "clinic",
+            doctorId: data.doctorId,
+            date: data.date instanceof Timestamp ? data.date.toDate() : new Date(data.date ?? data.fecha),
+            startTime: data.startTime ?? data.hora ?? "",
+            endTime: data.endTime ?? "",
+            status: data.status ?? data.estado ?? "Confirmado",
+            reason: data.reason ?? data.notas ?? "",
+            notes: data.notes ?? data.notas ?? "",
+            tiposEvento: data.tiposEvento ?? [],
+            type: data.type ?? "clinic",
+            dateFrom: data.dateFrom ? new Date(data.dateFrom) : undefined,
+            dateTo: data.dateTo ? new Date(data.dateTo) : undefined,
+            createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
+            createdBy: data.createdBy ?? "",
+          } as any;
+        });
+        setAppointments(appts);
+      }, () => {
+        // fallback if permission error
+        const saved = localStorage.getItem("veterinaria_appointments");
+        setAppointments(saved ? JSON.parse(saved) : initialAppointments);
+      });
+      // Load reference data (not real-time needed)
+      traerClientes().then(setClients).catch(() => {
+        const saved = localStorage.getItem("veterinaria_clients");
+        setClients(saved ? JSON.parse(saved) : initialClients);
+      });
+      traerMascotas().then(setPets).catch(() => {
+        const saved = localStorage.getItem("veterinaria_pets");
+        setPets(saved ? JSON.parse(saved) : initialPets);
+      });
+      traerTodosLosHorarios().then(setDoctorSchedules).catch(() => setDoctorSchedules([]));
+      traerTiposEvento().then(setTiposEvento).catch(() => setTiposEvento([]));
+      traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
+      const savedDoctors = localStorage.getItem("veterinaria_doctors");
+      setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
+      return () => unsub();
+    } else {
+      // localStorage fallback
       const saved = localStorage.getItem("veterinaria_appointments");
       setAppointments(saved ? JSON.parse(saved) : initialAppointments);
-    });
-    traerClientes().then(setClients).catch(() => {
-      const saved = localStorage.getItem("veterinaria_clients");
-      setClients(saved ? JSON.parse(saved) : initialClients);
-    });
-    traerMascotas().then(setPets).catch(() => {
-      const saved = localStorage.getItem("veterinaria_pets");
-      setPets(saved ? JSON.parse(saved) : initialPets);
-    });
-    traerTodosLosHorarios().then(setDoctorSchedules).catch(() => {
-      const saved = localStorage.getItem("veterinaria_doctor_schedules");
-      setDoctorSchedules(saved ? JSON.parse(saved) : []);
-    });
-    const savedDoctors = localStorage.getItem("veterinaria_doctors");
-    setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
-    // Load parametric data
-    traerTiposEvento().then(setTiposEvento).catch(() => setTiposEvento([]));
-    traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
+      const savedClients = localStorage.getItem("veterinaria_clients");
+      setClients(savedClients ? JSON.parse(savedClients) : initialClients);
+      const savedPets = localStorage.getItem("veterinaria_pets");
+      setPets(savedPets ? JSON.parse(savedPets) : initialPets);
+      const savedDoctors = localStorage.getItem("veterinaria_doctors");
+      setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
+      traerTiposEvento().then(setTiposEvento).catch(() => setTiposEvento([]));
+      traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
+    }
   }, []);
 
   // ── Helpers ──────────────────────────────────────
@@ -212,18 +254,23 @@ export default function AppointmentsModule() {
     if (!appointment) return;
 
     try {
-      await modificarTurno(appointmentId, { status: newStatus }, user?.id || "1");
-      if (newStatus === "Completado") {
-        setAppointments(prev => prev.filter(apt => apt.id !== appointmentId));
-        toast.success("✓ Turno marcado como completado y removido de la agenda");
-        addLog("Actualizar", "Turnos", `Turno completado para ${getPetName(appointment.petId)}`);
+      if (FIREBASE_CONFIGURED && db) {
+        await updateDoc(doc(db, "turnos", appointmentId), {
+          status: newStatus,
+          estado: newStatus,
+          updatedAt: serverTimestamp(),
+          updatedBy: user?.id || "1",
+        });
+        // onSnapshot updates the list automatically
       } else {
+        await modificarTurno(appointmentId, { status: newStatus }, user?.id || "1");
         setAppointments(prev => prev.map(apt => apt.id === appointmentId ? { ...apt, status: newStatus } : apt));
-        toast.success(`Estado actualizado a ${newStatus}`);
-        addLog("Actualizar", "Turnos", `Turno de ${getPetName(appointment.petId)} → ${newStatus}`);
       }
-    } catch {
-      toast.error("Error al actualizar el estado del turno.");
+      toast.success(`Estado actualizado a ${newStatus}`);
+      addLog("Actualizar", "turnos", `Turno de ${getPetName(appointment.petId)} → ${newStatus}`);
+    } catch (err: any) {
+      console.error("[AppointmentsModule] Error actualizando estado:", err);
+      toast.error(err?.code === "permission-denied" ? "Sin permisos para actualizar el turno." : "Error al actualizar el estado del turno.");
     }
   };
 
@@ -311,31 +358,82 @@ export default function AppointmentsModule() {
 
     try {
       if (isEditing && selectedAppointment) {
-        const patch: any = {
-          ...formData,
-          endTime: formData.startTime ? calcEndTime(formData.startTime) : undefined,
-          date: formData.date.toISOString().split("T")[0],
+        // ── Update existing appointment ────────────────────────────────
+        const updatePayload: Record<string, any> = {
+          clientId: formData.clientId,
+          petId: formData.petId,
+          doctorId: formData.doctorId || null,
+          date: formData.date,
+          startTime: formData.startTime || null,
+          endTime: formData.startTime ? calcEndTime(formData.startTime) : null,
+          status: selectedAppointment.status,
+          reason: formData.reason || null,
+          notes: formData.notes || null,
+          tiposEvento: formData.eventoTipoId ? formData.eventoTipoId.split(",").filter(Boolean) : [],
+          type: formData.type,
+          updatedAt: FIREBASE_CONFIGURED ? serverTimestamp() : new Date(),
+          updatedBy: user?.id || "1",
         };
-        const updated = await modificarTurno(selectedAppointment.id, patch, user?.id || "1");
-        setAppointments(prev => prev.map(apt => apt.id === selectedAppointment.id ? updated : apt));
+        if (formData.type === "daycare") {
+          updatePayload.dateFrom = formData.dateFrom ?? null;
+          updatePayload.dateTo = formData.dateTo ?? null;
+        }
+        if (FIREBASE_CONFIGURED && db) {
+          await updateDoc(doc(db, "turnos", selectedAppointment.id), updatePayload);
+        } else {
+          await modificarTurno(selectedAppointment.id, formData as any, user?.id || "1");
+          setAppointments(prev => prev.map(apt => apt.id === selectedAppointment.id ? { ...apt, ...updatePayload } : apt));
+        }
         toast.success("Turno actualizado exitosamente");
-        addLog("Actualizar", "Turnos", `Turno actualizado para ${getPetName(formData.petId)}`);
+        addLog("Actualizar", "turnos", `Turno actualizado para ${getPetName(formData.petId)}`);
       } else {
-        const aptData: any = {
-          ...formData,
-          date: formData.date.toISOString().split("T")[0],
-          status: "Confirmado" as AppointmentStatus,
-          endTime: formData.startTime ? calcEndTime(formData.startTime) : "",
-          serviceId: formData.type || "clinic",
+        // ── Create new appointment — write directly to Firestore ────────
+        const newPayload: Record<string, any> = {
+          clientId: formData.clientId,
+          clienteId: formData.clientId, // alias for compatibility
+          petId: formData.petId,
+          mascotaId: formData.petId,
+          doctorId: formData.doctorId || null,
+          date: formData.date,
+          fecha: formData.date,
+          startTime: formData.startTime || null,
+          hora: formData.startTime || null,
+          endTime: formData.startTime ? calcEndTime(formData.startTime) : null,
+          status: "Confirmado",
+          estado: "Confirmado",
+          reason: formData.reason || null,
+          notes: formData.notes || null,
+          notas: formData.notes || null,
+          tiposEvento: formData.eventoTipoId ? formData.eventoTipoId.split(",").filter(Boolean) : [],
+          type: formData.type,
+          serviceId: formData.type,
+          creadoEn: FIREBASE_CONFIGURED ? serverTimestamp() : new Date(),
+          createdAt: FIREBASE_CONFIGURED ? serverTimestamp() : new Date(),
+          createdBy: user?.id || "1",
         };
-        const newApt = await registrarTurno(aptData, user?.id || "1");
-        setAppointments(prev => [...prev, newApt]);
-        toast.success("✓ Turno agendado y confirmado automáticamente");
-        addLog("Crear", "Turnos", `Turno creado para ${getPetName(formData.petId)} — ${getClientName(formData.clientId)}`);
+        if (formData.type === "daycare") {
+          newPayload.dateFrom = formData.dateFrom ?? null;
+          newPayload.dateTo = formData.dateTo ?? null;
+        }
+
+        if (FIREBASE_CONFIGURED && db) {
+          await addDoc(collection(db, "turnos"), newPayload);
+          // onSnapshot will update the list automatically
+        } else {
+          // localStorage fallback
+          const newApt = await registrarTurno(formData as any, user?.id || "1");
+          setAppointments(prev => [...prev, newApt]);
+        }
+        toast.success("✓ Turno agendado y confirmado");
+        addLog("Crear", "turnos", `Turno creado para ${getPetName(formData.petId)} — ${getClientName(formData.clientId)}`);
       }
       handleCancel();
-    } catch {
-      toast.error("Error al guardar el turno. Intente nuevamente.");
+    } catch (err: any) {
+      console.error("[AppointmentsModule] Error guardando turno:", err);
+      const msg = err?.code === "permission-denied"
+        ? "Sin permisos. Verificá que estás autenticado como recepcionista o admin."
+        : err?.message ?? "Error al guardar el turno. Intente nuevamente.";
+      toast.error(msg);
     }
   };
 
@@ -366,13 +464,24 @@ export default function AppointmentsModule() {
   const handleDelete = async () => {
     if (selectedAppointment) {
       try {
-        await cancelarTurno(selectedAppointment.id, "Eliminado por el usuario", user?.id || "1");
-        setAppointments(prev => prev.filter(apt => apt.id !== selectedAppointment.id));
-        toast.success("Turno eliminado");
-        addLog("Eliminar", "Turnos", `Turno ${selectedAppointment.id} eliminado`);
+        if (FIREBASE_CONFIGURED && db) {
+          await updateDoc(doc(db, "turnos", selectedAppointment.id), {
+            status: "Cancelado",
+            estado: "Cancelado",
+            cancellationReason: "Eliminado por el usuario",
+            cancelledAt: serverTimestamp(),
+            updatedBy: user?.id || "1",
+          });
+          // onSnapshot removes it from list automatically if filtered
+        } else {
+          await cancelarTurno(selectedAppointment.id, "Eliminado por el usuario", user?.id || "1");
+          setAppointments(prev => prev.filter(apt => apt.id !== selectedAppointment.id));
+        }
+        toast.success("Turno cancelado");
+        addLog("Eliminar", "turnos", `Turno ${selectedAppointment.id} cancelado`);
         handleCancel();
-      } catch {
-        toast.error("Error al eliminar el turno.");
+      } catch (err: any) {
+        toast.error(err?.code === "permission-denied" ? "Sin permisos para cancelar el turno." : "Error al cancelar el turno.");
       }
       setDeleteDialogOpen(false);
     }
@@ -635,20 +744,38 @@ export default function AppointmentsModule() {
                   </div>
                 </div>
 
-                {/* Motivo / Tipo de evento clínico */}
+                {/* Motivo / Tipos de Evento (multi-selección) */}
                 {formData.type === "clinic" && tiposEvento.length > 0 && (
                   <div className="space-y-2">
-                    <Label>Motivo / Tipo de Evento</Label>
-                    <Select value={formData.eventoTipoId} onValueChange={(v) => setFormData(prev => ({ ...prev, eventoTipoId: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Seleccione motivo (opcional)" /></SelectTrigger>
-                      <SelectContent>
-                        {tiposEvento.map(t => (
-                          <SelectItem key={t.id} value={t.id}>
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs mr-1 ${t.color}`}>{t.name}</span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Label>Motivo / Tipos de Consulta <span className="text-xs text-gray-400 font-normal">(puede seleccionar varios)</span></Label>
+                    <div className="flex flex-wrap gap-2 p-3 border border-gray-200 rounded-lg bg-gray-50/50 min-h-[42px]">
+                      {tiposEvento.map(t => {
+                        const selectedIds: string[] = formData.eventoTipoId ? formData.eventoTipoId.split(",").filter(Boolean) : [];
+                        const isSelected = selectedIds.includes(t.id);
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => {
+                              const current = formData.eventoTipoId ? formData.eventoTipoId.split(",").filter(Boolean) : [];
+                              const updated = isSelected ? current.filter(id => id !== t.id) : [...current, t.id];
+                              setFormData(prev => ({ ...prev, eventoTipoId: updated.join(",") }));
+                            }}
+                            className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all border-2 ${
+                              isSelected ? `${t.color} border-current shadow-sm` : "bg-white text-gray-500 border-gray-200 hover:border-gray-400"
+                            }`}
+                          >
+                            {isSelected && <span className="mr-1">✓</span>}
+                            {t.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {formData.eventoTipoId && (
+                      <p className="text-xs text-gray-500">
+                        Seleccionados: {formData.eventoTipoId.split(",").filter(Boolean).map(id => tiposEvento.find(t => t.id === id)?.name).filter(Boolean).join(", ")}
+                      </p>
+                    )}
                   </div>
                 )}
 

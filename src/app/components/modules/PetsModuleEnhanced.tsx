@@ -13,6 +13,8 @@ import {
 import { traerClientes } from "../../services/clienteService";
 import { traerEspecies, traerTodasLasRazas } from "../../services/parametrosService";
 import { EspecieParametro, RazaParametro } from "../../types";
+import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
+import { collection, onSnapshot, query, where, orderBy, Timestamp } from "firebase/firestore";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -26,7 +28,7 @@ import { Calendar } from "../ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Badge } from "../ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
-import { Search, PawPrint, Save, X, Trash2, Edit, Calendar as CalendarIcon, Info, UserX, Users, History, Skull, AlertTriangle, FileText, FileSpreadsheet, List } from "lucide-react";
+import { Search, PawPrint, Save, X, Trash2, Edit, Calendar as CalendarIcon, Info, UserX, Users, History, Archive, AlertTriangle, FileText, FileSpreadsheet, List } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -94,31 +96,66 @@ export default function PetsModuleEnhanced() {
   });
 
   useEffect(() => {
-    traerMascotas().then(loaded => {
-      const migrated = loaded.map((pet: any) => ({
-        ...pet,
-        deceased: pet.deceased || false,
-        ownershipHistory: pet.ownershipHistory || [],
-      }));
-      setPets(migrated);
-    }).catch(() => {
-      const savedPets = localStorage.getItem("veterinaria_pets");
-      const loadedPets = savedPets ? JSON.parse(savedPets) : initialPets;
-      setPets(loadedPets.map((pet: any) => ({
-        ...pet,
-        deceased: pet.deceased || false,
-        ownershipHistory: pet.ownershipHistory || [],
-      })));
-    });
-    traerClientes().then(setClients).catch(() => {
-      const savedClients = localStorage.getItem("veterinaria_clients");
-      setClients(savedClients ? JSON.parse(savedClients) : initialClients);
-    });
-    // Load dynamic species and breeds from parametrosService
-    traerEspecies().then(setEspecies).catch(() => {
-      setEspecies(PREDEFINED_SPECIES.map(s => ({ id: s.id, name: s.name, icon: s.icon, description: s.description, active: true, createdAt: new Date() })));
-    });
-    traerTodasLasRazas().then(setTodasLasRazas).catch(() => setTodasLasRazas([]));
+    if (FIREBASE_CONFIGURED && db) {
+      // Real-time pets subscription
+      const qPets = query(collection(db, "mascotas"), where("deleted", "==", false));
+      const unsubPets = onSnapshot(qPets, (snap) => {
+        const migrated = snap.docs.map(d => {
+          const data = d.data();
+          return {
+            id: d.id,
+            name: data.name ?? "",
+            breedId: data.breedId ?? "",
+            sex: data.sex ?? "Desconocido",
+            birthDate: data.birthDate instanceof Timestamp ? data.birthDate.toDate() : data.birthDate ? new Date(data.birthDate) : undefined,
+            color: data.color,
+            observations: data.observations,
+            clientId: data.clientId ?? "",
+            deceased: data.deceased ?? false,
+            deceasedDate: data.deceasedDate instanceof Timestamp ? data.deceasedDate.toDate() : undefined,
+            deceasedReason: data.deceasedReason,
+            deceasedNotes: data.deceasedNotes,
+            ownershipHistory: data.ownershipHistory ?? [],
+            species: data.species,
+            race: data.race,
+            createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
+            createdBy: data.createdBy ?? "",
+            deleted: data.deleted ?? false,
+          } as any;
+        });
+        setPets(migrated);
+      }, () => {
+        const saved = localStorage.getItem("veterinaria_pets");
+        setPets(saved ? JSON.parse(saved) : initialPets);
+      });
+      traerClientes().then(setClients).catch(() => setClients(initialClients));
+      traerEspecies().then(setEspecies).catch(() => {
+        setEspecies(PREDEFINED_SPECIES.map(s => ({ id: s.id, name: s.name, icon: s.icon, description: s.description, active: true, createdAt: new Date() })));
+      });
+      traerTodasLasRazas().then(setTodasLasRazas).catch(() => setTodasLasRazas([]));
+      return () => unsubPets();
+    } else {
+      traerMascotas().then(loaded => {
+        const migrated = loaded.map((pet: any) => ({
+          ...pet,
+          deceased: pet.deceased || false,
+          ownershipHistory: pet.ownershipHistory || [],
+        }));
+        setPets(migrated);
+      }).catch(() => {
+        const savedPets = localStorage.getItem("veterinaria_pets");
+        const loadedPets = savedPets ? JSON.parse(savedPets) : initialPets;
+        setPets(loadedPets.map((pet: any) => ({ ...pet, deceased: pet.deceased || false, ownershipHistory: pet.ownershipHistory || [] })));
+      });
+      traerClientes().then(setClients).catch(() => {
+        const savedClients = localStorage.getItem("veterinaria_clients");
+        setClients(savedClients ? JSON.parse(savedClients) : initialClients);
+      });
+      traerEspecies().then(setEspecies).catch(() => {
+        setEspecies(PREDEFINED_SPECIES.map(s => ({ id: s.id, name: s.name, icon: s.icon, description: s.description, active: true, createdAt: new Date() })));
+      });
+      traerTodasLasRazas().then(setTodasLasRazas).catch(() => setTodasLasRazas([]));
+    }
   }, []);
 
   const calculateAge = (birthDate: Date | undefined): string => {
@@ -171,7 +208,7 @@ export default function PetsModuleEnhanced() {
 
       // Filtro por estado
       if (filterStatus === "active" && (pet as any).deceased) return false;
-      if (filterStatus === "deceased" && !(pet as any).deceased) return false;
+      if (filterStatus === "deBaja" && !(pet as any).deceased) return false;
 
       // Filtro por edad
       if (filterAge !== "all") {
@@ -329,12 +366,12 @@ export default function PetsModuleEnhanced() {
   const handleMarkAsDeceased = async () => {
     if (!selectedPet) return;
     if (!deceasedForm.deceasedReason.trim()) {
-      toast.error("Por favor indique el motivo del fallecimiento");
+      toast.error("Por favor indique el motivo de la baja");
       return;
     }
 
     try {
-      // Use mascotaService.marcarFallecida via direct patch
+      // Use mascotaService.marcarBaja via direct patch
       const updated = await modificarMascota(
         selectedPet.id,
         {
@@ -346,8 +383,8 @@ export default function PetsModuleEnhanced() {
         user?.id || "1"
       );
       setPets(prev => prev.map(p => p.id === selectedPet.id ? { ...p, ...updated } : p));
-      toast.success(`${selectedPet.name} ha sido marcado/a como fallecido/a`);
-      addLog("Actualizar", "Mascotas", `Mascota ${selectedPet.name} marcada como fallecida`);
+      toast.success(`${selectedPet.name} ha sido dado/a de baja`);
+      addLog("Actualizar", "Mascotas", `Mascota ${selectedPet.name} dada de baja`);
     } catch {
       toast.error("Error al actualizar el estado de la mascota.");
     }
@@ -445,7 +482,7 @@ export default function PetsModuleEnhanced() {
                   clients.find(c => c.id === p.clientId)?.fullName || "—",
                   p.birthDate ? format(new Date(p.birthDate), "dd/MM/yyyy") : "—",
                   (p as any).size || "—",
-                  (p as any).deceased ? "Fallecida" : "Activa",
+                  (p as any).deceased ? "Baja" : "Activa",
                 ]),
                 "Listado de Mascotas"
               );
@@ -468,7 +505,7 @@ export default function PetsModuleEnhanced() {
                   (p as any).race || "—",
                   p.sex,
                   clients.find(c => c.id === p.clientId)?.fullName || "—",
-                  (p as any).deceased ? "Fallecida" : "Activa",
+                  (p as any).deceased ? "Baja" : "Activa",
                 ]),
                 { "Total de mascotas": String(filteredPets.length) }
               );
@@ -639,9 +676,14 @@ export default function PetsModuleEnhanced() {
                       mode="single"
                       selected={formData.birthDate}
                       onSelect={(date) => {
+                        if (date && date > new Date()) {
+                          toast.error("La fecha de nacimiento no puede ser una fecha futura.");
+                          return;
+                        }
                         setFormData(prev => ({ ...prev, birthDate: date }));
                         setCalendarOpen(false);
                       }}
+                      disabled={{ after: new Date() }}
                       initialFocus
                     />
                   </PopoverContent>
@@ -757,7 +799,7 @@ export default function PetsModuleEnhanced() {
                   <SelectContent>
                     <SelectItem value="all">Todos los estados</SelectItem>
                     <SelectItem value="active">Activas</SelectItem>
-                    <SelectItem value="deceased">Fallecidas</SelectItem>
+                    <SelectItem value="deBaja">Bajas</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -795,7 +837,7 @@ export default function PetsModuleEnhanced() {
               )}
               {filterStatus !== "all" && (
                 <Badge variant="outline" className="bg-green-50 border-green-300">
-                  Estado: {filterStatus === "active" ? "Activas" : "Fallecidas"}
+                  Estado: {filterStatus === "active" ? "Activas" : "Bajas"}
                   <button
                     onClick={() => setFilterStatus("all")}
                     className="ml-1.5 hover:text-red-600"
@@ -873,7 +915,7 @@ export default function PetsModuleEnhanced() {
                           <TableCell className="font-medium">
                             {pet.name}
                             {pet.deceased && (
-                              <Skull className="inline h-4 w-4 ml-1.5 text-gray-500" title="Fallecida" />
+                              <Archive className="inline h-4 w-4 ml-1.5 text-gray-500" title="Dar de baja" />
                             )}
                           </TableCell>
                           <TableCell>
@@ -910,8 +952,8 @@ export default function PetsModuleEnhanced() {
                           <TableCell className="text-center">
                             {pet.deceased ? (
                               <Badge variant="outline" className="border-gray-400 text-gray-700">
-                                <Skull className="h-3 w-3 mr-1" />
-                                Fallecida
+                                <Archive className="h-3 w-3 mr-1" />
+                                Baja
                               </Badge>
                             ) : (
                               <Badge variant="outline" className="border-green-400 text-green-700">
@@ -952,9 +994,9 @@ export default function PetsModuleEnhanced() {
                                       setDeceasedDialogOpen(true);
                                     }}
                                     className="text-gray-600 hover:text-gray-700 hover:bg-gray-50"
-                                    title="Marcar como fallecida"
+                                    title="Dar de baja"
                                   >
-                                    <Skull className="h-4 w-4" />
+                                    <Archive className="h-4 w-4" />
                                   </Button>
                                 </>
                               )}
@@ -984,7 +1026,7 @@ export default function PetsModuleEnhanced() {
               </span>
               <span className="text-gray-400">|</span>
               <span>
-                Fallecidas: <span className="text-gray-500 font-medium">{pets.filter(p => (p as any).deceased).length}</span>
+                Bajas: <span className="text-gray-500 font-medium">{pets.filter(p => (p as any).deceased).length}</span>
               </span>
             </div>
             {(filterSpecies !== "all" || filterStatus !== "all" || filterAge !== "all" || searchTerm) && (
@@ -1017,23 +1059,23 @@ export default function PetsModuleEnhanced() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Dialog: Marcar como Fallecida */}
+      {/* Dialog: Dar de baja */}
       <Dialog open={deceasedDialogOpen} onOpenChange={setDeceasedDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-gray-800">
-              <Skull className="h-5 w-5" />
-              Marcar como Fallecida: {selectedPet?.name}
+              <Archive className="h-5 w-5" />
+              Dar de baja: {selectedPet?.name}
             </DialogTitle>
             <DialogDescription>
-              Registre la fecha y motivo del fallecimiento. Esta información quedará en el historial.
+              Registre la fecha y motivo de la baja. Esta información quedará en el historial.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 pt-2">
             <div className="space-y-2">
               <Label>
-                Fecha de Fallecimiento <span className="text-red-500">*</span>
+                Fecha de Baja <span className="text-red-500">*</span>
               </Label>
               <Popover open={deceasedCalendarOpen} onOpenChange={setDeceasedCalendarOpen}>
                 <PopoverTrigger asChild>
@@ -1076,7 +1118,7 @@ export default function PetsModuleEnhanced() {
                 id="deceasedNotes"
                 value={deceasedForm.deceasedNotes}
                 onChange={(e) => setDeceasedForm(prev => ({ ...prev, deceasedNotes: e.target.value }))}
-                placeholder="Detalles adicionales sobre el fallecimiento..."
+                placeholder="Detalles adicionales sobre la baja..."
                 rows={3}
               />
             </div>
@@ -1086,7 +1128,7 @@ export default function PetsModuleEnhanced() {
                 onClick={handleMarkAsDeceased}
                 className="flex-1 bg-gray-600 hover:bg-gray-700"
               >
-                <Skull className="mr-2 h-4 w-4" />
+                <Archive className="mr-2 h-4 w-4" />
                 Confirmar Fallecimiento
               </Button>
               <Button

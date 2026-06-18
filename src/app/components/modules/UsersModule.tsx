@@ -262,6 +262,7 @@ export default function UsersModule() {
         toast.success("Usuario actualizado exitosamente");
       } else {
         if (!formData.password) { toast.error("La contraseña es obligatoria"); return; }
+        if (formData.password.length < 6) { toast.error("La contraseña debe tener al menos 6 caracteres (requisito de Firebase)."); return; }
         const newUser = await registrarUsuario({
           username: formData.username,
           password: formData.password,
@@ -430,7 +431,8 @@ export default function UsersModule() {
                       value={formData.password}
                       onChange={(e) => setFormData(p => ({ ...p, password: e.target.value }))}
                       onKeyDown={(e) => e.key === "Enter" && document.getElementById("fullName")?.focus()}
-                      placeholder="Contraseña segura"
+                      placeholder="Mínimo 6 caracteres"
+                      minLength={6}
                       className="flex-1"
                     />
                     <Button type="button" variant="outline" size="icon" onClick={() => setShowPassword(!showPassword)}>

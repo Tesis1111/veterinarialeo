@@ -15,6 +15,8 @@ import { traerMascotas } from "../../services/mascotaService";
 import { traerTiposEvento, traerVacunasPorEspecie } from "../../services/parametrosService";
 import { traerDoctores } from "../../services/doctorService";
 import { TipoEvento, VacunaParametro, DoctorPerfil } from "../../types";
+import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
+import { collection, addDoc, onSnapshot, serverTimestamp, Timestamp, query, where, orderBy } from "firebase/firestore";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -31,7 +33,7 @@ import {
   FileText, Eye, Download, Calendar as CalendarIcon, Plus, Upload, X,
   File, Image as ImageIcon, FileType, Thermometer, Scale,
   Stethoscope, Pill, ClipboardList, AlertCircle, Mail, CheckSquare, Square, Send,
-  FileSpreadsheet, Skull, AlertTriangle, Syringe
+  FileSpreadsheet, Archive, AlertTriangle, Syringe
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -97,21 +99,66 @@ export default function MedicalHistoryModule() {
   });
 
   useEffect(() => {
-    traerTodosLosHistoriales().then(setRecords).catch(() => {
-      const saved = localStorage.getItem("veterinaria_medical_records");
-      setRecords(saved ? JSON.parse(saved) : initialMedicalRecords);
-    });
-    traerClientes().then(setClients).catch(() => {
-      const saved = localStorage.getItem("veterinaria_clients");
-      setClients(saved ? JSON.parse(saved) : initialClients);
-    });
-    traerMascotas().then(setPets).catch(() => {
-      const saved = localStorage.getItem("veterinaria_pets");
-      setPets(saved ? JSON.parse(saved) : initialPets);
-    });
-    // Load parametric data
-    traerTiposEvento().then(setTiposEvento).catch(() => setTiposEvento([]));
-    traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
+    // ── Real-time subscription to historiales ────────────────────────
+    if (FIREBASE_CONFIGURED && db) {
+      const q = query(
+        collection(db, "historiales"),
+        where("deleted", "==", false),
+        orderBy("date", "desc")
+      );
+      const unsub = onSnapshot(q, (snap) => {
+        const recs = snap.docs.map(d => {
+          const data = d.data();
+          return {
+            id: d.id,
+            petId: data.petId ?? data.mascotaId ?? "",
+            professionalId: data.professionalId ?? data.doctorId ?? "",
+            date: data.date instanceof Timestamp ? data.date.toDate() : new Date(data.date ?? data.fecha),
+            eventType: data.eventType ?? data.tipoEvento ?? "",
+            description: data.description ?? data.descripcion ?? "",
+            diagnosis: data.diagnosis ?? data.diagnostico,
+            treatment: data.treatment ?? data.tratamiento,
+            medication: data.medication,
+            notes: data.notes ?? data.notas,
+            weight: data.weight ?? data.peso,
+            temperature: data.temperature ?? data.temperatura,
+            clientIdAtTime: data.clientIdAtTime ?? data.clienteId,
+            clientNameAtTime: data.clientNameAtTime ?? data.clienteNombre,
+            nextAppointmentDate: data.nextAppointmentDate instanceof Timestamp
+              ? data.nextAppointmentDate.toDate()
+              : data.nextAppointmentDate ? new Date(data.nextAppointmentDate) : undefined,
+            attachments: data.attachments ?? [],
+            deleted: data.deleted ?? false,
+            createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
+            createdBy: data.createdBy ?? data.creadoPor ?? "",
+          } as any;
+        });
+        setRecords(recs);
+      }, () => {
+        const saved = localStorage.getItem("veterinaria_medical_records");
+        setRecords(saved ? JSON.parse(saved) : initialMedicalRecords);
+      });
+      traerClientes().then(setClients).catch(() => setClients(initialClients));
+      traerMascotas().then(setPets).catch(() => setPets(initialPets));
+      traerTiposEvento().then(setTiposEvento).catch(() => setTiposEvento([]));
+      traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
+      return () => unsub();
+    } else {
+      traerTodosLosHistoriales().then(setRecords).catch(() => {
+        const saved = localStorage.getItem("veterinaria_medical_records");
+        setRecords(saved ? JSON.parse(saved) : initialMedicalRecords);
+      });
+      traerClientes().then(setClients).catch(() => {
+        const saved = localStorage.getItem("veterinaria_clients");
+        setClients(saved ? JSON.parse(saved) : initialClients);
+      });
+      traerMascotas().then(setPets).catch(() => {
+        const saved = localStorage.getItem("veterinaria_pets");
+        setPets(saved ? JSON.parse(saved) : initialPets);
+      });
+      traerTiposEvento().then(setTiposEvento).catch(() => setTiposEvento([]));
+      traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
+    }
   }, []);
 
   // ── Helpers ──────────────────────────────────────
@@ -265,7 +312,7 @@ export default function MedicalHistoryModule() {
       return;
     }
     if (isPetDeceased) {
-      toast.error("No se pueden agregar registros a una mascota fallecida");
+      toast.error("No se pueden agregar registros a una mascota Baja");
       return;
     }
 
@@ -273,54 +320,93 @@ export default function MedicalHistoryModule() {
     const currentOwner = clients.find(c => c.id === selectedClientId);
 
     try {
-      const formDataPayload: any = {
+      const firestorePayload: Record<string, any> = {
+        // Schema matching the MD spec
+        mascotaId: selectedPetId,
         petId: selectedPetId,
-        date: addForm.date.toISOString(),
-        eventType: addForm.eventType,
-        description: addForm.description,
+        clienteId: selectedClientId,
+        clienteNombre: currentOwner?.fullName || "Desconocido",
+        clientIdAtTime: selectedClientId,
+        clientNameAtTime: currentOwner?.fullName || "Desconocido",
+        doctorId: addForm.professionalId,
         professionalId: addForm.professionalId,
-        weight: addForm.weight ? parseFloat(addForm.weight) : undefined,
-        temperature: addForm.temperature ? parseFloat(addForm.temperature) : undefined,
-        diagnosis: addForm.diagnosis || undefined,
-        treatment: addForm.treatment || undefined,
-        medication: addForm.medication || undefined,
-        notes: addForm.notes || undefined,
-        nextAppointmentDate: proximoRefuerzo ? proximoRefuerzo.toISOString() : undefined,
+        fecha: addForm.date,
+        date: addForm.date,
+        tipoEvento: addForm.eventType,
+        eventType: addForm.eventType,
+        descripcion: addForm.description,
+        description: addForm.description,
+        diagnostico: addForm.diagnosis || null,
+        diagnosis: addForm.diagnosis || null,
+        tratamiento: addForm.treatment || null,
+        treatment: addForm.treatment || null,
+        medicamentos: addForm.medication ? [addForm.medication] : [],
+        medication: addForm.medication || null,
+        peso: addForm.weight ? parseFloat(addForm.weight) : null,
+        weight: addForm.weight ? parseFloat(addForm.weight) : null,
+        temperatura: addForm.temperature ? parseFloat(addForm.temperature) : null,
+        temperature: addForm.temperature ? parseFloat(addForm.temperature) : null,
+        notes: addForm.notes || null,
+        proximoControl: proximoRefuerzo ?? null,
+        nextAppointmentDate: proximoRefuerzo ?? null,
+        attachments: uploadedFiles.length > 0 ? uploadedFiles : [],
+        deleted: false,
+        creadoEn: FIREBASE_CONFIGURED ? serverTimestamp() : new Date(),
+        createdAt: FIREBASE_CONFIGURED ? serverTimestamp() : new Date(),
+        creadoPor: user?.id || "1",
+        createdBy: user?.id || "1",
       };
 
-      // registrarHistorial — Gestor Alta Historial
-      const newRecord = await registrarHistorial(
-        formDataPayload,
-        user?.id || "1",
-        selectedClientId,
-        currentOwner?.fullName || "Desconocido",
-        uploadedFiles.length > 0 ? uploadedFiles : []
-      );
-
-      setRecords(prev => [...prev, newRecord]);
-      addLog("Crear", "Historial Clínico", `Registro clínico agregado para ${getPetName(selectedPetId)}`);
-    toast.success("Registro agregado al historial clínico");
-
-    // Enviar email si se seleccionó
-    if (sendEmail) {
-      const clientEmail = getClientEmail(selectedClientId);
-      const clientName = getClientName(selectedClientId);
-      const petName = getPetName(selectedPetId);
-      if (clientEmail) {
-        // Simulación del envío (en producción se conectaría al backend)
-        setTimeout(() => {
-          toast.success(`✉️ Historial enviado a ${clientName} (${clientEmail})`);
-          addLog("Exportar", "Historial Clínico", `Historial de ${petName} enviado por email a ${clientEmail}`);
-        }, 800);
+      if (FIREBASE_CONFIGURED && db) {
+        await addDoc(collection(db, "historiales"), firestorePayload);
+        // onSnapshot will add it to the list automatically
       } else {
-        toast.warning("El cliente no tiene email registrado");
+        // localStorage fallback via service
+        const servicePayload: any = {
+          petId: selectedPetId,
+          date: addForm.date.toISOString(),
+          eventType: addForm.eventType,
+          description: addForm.description,
+          professionalId: addForm.professionalId,
+          weight: addForm.weight ? parseFloat(addForm.weight) : undefined,
+          temperature: addForm.temperature ? parseFloat(addForm.temperature) : undefined,
+          diagnosis: addForm.diagnosis || undefined,
+          treatment: addForm.treatment || undefined,
+          medication: addForm.medication || undefined,
+          notes: addForm.notes || undefined,
+          nextAppointmentDate: proximoRefuerzo ? proximoRefuerzo.toISOString() : undefined,
+        };
+        const newRecord = await registrarHistorial(
+          servicePayload, user?.id || "1", selectedClientId, currentOwner?.fullName || "Desconocido",
+          uploadedFiles.length > 0 ? uploadedFiles : []
+        );
+        setRecords(prev => [...prev, newRecord]);
       }
-    }
+
+      addLog("Crear", "historiales", `Registro clínico agregado para ${getPetName(selectedPetId)}`);
+      toast.success("Registro agregado al historial clínico");
+
+      if (sendEmail) {
+        const clientEmail = getClientEmail(selectedClientId);
+        const clientName = getClientName(selectedClientId);
+        const petName = getPetName(selectedPetId);
+        if (clientEmail) {
+          setTimeout(() => {
+            toast.success(`✉️ Historial enviado a ${clientName} (${clientEmail})`);
+          }, 800);
+        } else {
+          toast.warning("El cliente no tiene email registrado");
+        }
+      }
 
       resetForm();
       setActiveTab("consult");
-    } catch {
-      toast.error("Error al guardar el registro. Intente nuevamente.");
+    } catch (err: any) {
+      console.error("[MedicalHistory] Error guardando historial:", err);
+      const msg = err?.code === "permission-denied"
+        ? "Sin permisos. Solo veterinarios y admin pueden registrar historial clínico."
+        : err?.message ?? "Error al guardar el registro. Intente nuevamente.";
+      toast.error(msg);
     }
   };
 
@@ -404,7 +490,7 @@ export default function MedicalHistoryModule() {
   const clientEmail = getClientEmail(selectedClientId);
   const isPetDeceased = selectedPetInfo?.deceased || false;
 
-  // ── Marcar mascota como fallecida ──────────────────────────────────────
+  // ── Marcar mascota como Baja ──────────────────────────────────────
   const handleMarkAsDeceased = () => {
     if (!selectedPetId || !deceasedForm.deceasedReason.trim()) {
       toast.error("Debe ingresar el motivo del fallecimiento");
@@ -426,8 +512,8 @@ export default function MedicalHistoryModule() {
     setPets(updatedPets);
     localStorage.setItem("veterinaria_pets", JSON.stringify(updatedPets));
 
-    addLog("Actualizar", "Mascotas", `Mascota ${getPetName(selectedPetId)} marcada como fallecida`);
-    toast.success(`${getPetName(selectedPetId)} ha sido marcada como fallecida`);
+    addLog("Actualizar", "Mascotas", `Mascota ${getPetName(selectedPetId)} dada de baja`);
+    toast.success(`${getPetName(selectedPetId)} ha sido dada de baja`);
 
     setDeceasedDialogOpen(false);
     setDeceasedForm({ deceasedDate: new Date(), deceasedReason: "", deceasedNotes: "" });
@@ -494,8 +580,8 @@ export default function MedicalHistoryModule() {
                     </Badge>
                     {isPetDeceased && (
                       <Badge className="bg-red-100 text-red-800 text-xs flex items-center gap-1">
-                        <Skull className="h-3 w-3" />
-                        Fallecida
+                        <Archive className="h-3 w-3" />
+                        Baja
                       </Badge>
                     )}
                   </div>
@@ -510,7 +596,7 @@ export default function MedicalHistoryModule() {
                   )}
                   {isPetDeceased && selectedPetInfo.deceasedDate && (
                     <div className="text-xs text-red-700 flex items-center gap-1 pt-1">
-                      <Skull className="h-3 w-3" />
+                      <Archive className="h-3 w-3" />
                       Fallecimiento: {format(new Date(selectedPetInfo.deceasedDate), "dd/MM/yyyy")}
                     </div>
                   )}
@@ -525,16 +611,16 @@ export default function MedicalHistoryModule() {
         </CardContent>
       </Card>
 
-      {/* Alerta si la mascota está fallecida */}
+      {/* Alerta si la mascota está Baja */}
       {selectedPetId && isPetDeceased && (
         <Card className="border-red-300 bg-red-50">
           <CardContent className="pt-4">
             <div className="flex items-start gap-3">
-              <Skull className="h-5 w-5 text-red-600 mt-0.5 flex-shrink-0" />
+              <Archive className="h-5 w-5 text-red-600 mt-0.5 flex-shrink-0" />
               <div className="flex-1">
-                <h3 className="font-semibold text-red-800">Mascota fallecida</h3>
+                <h3 className="font-semibold text-red-800">Mascota Baja</h3>
                 <p className="text-sm text-red-700 mt-1">
-                  Esta mascota está marcada como fallecida. No se pueden agregar ni modificar registros en su historial clínico.
+                  Esta mascota está dada de baja. No se pueden agregar ni modificar registros en su historial clínico.
                 </p>
                 {selectedPetInfo?.deceasedReason && (
                   <p className="text-sm text-red-600 mt-2">
@@ -576,8 +662,8 @@ export default function MedicalHistoryModule() {
                       className="border-red-300 text-red-700 hover:bg-red-50"
                       size="sm"
                     >
-                      <Skull className="mr-2 h-4 w-4" />
-                      Marcar Fallecida
+                      <Archive className="mr-2 h-4 w-4" />
+                      Dar de baja
                     </Button>
                   )}
                   <Button
@@ -774,10 +860,10 @@ export default function MedicalHistoryModule() {
                 </div>
               ) : isPetDeceased ? (
                 <div className="text-center py-12">
-                  <Skull className="h-16 w-16 mx-auto mb-4 text-gray-400" />
-                  <p className="text-gray-600 font-medium">Mascota fallecida</p>
+                  <Archive className="h-16 w-16 mx-auto mb-4 text-gray-400" />
+                  <p className="text-gray-600 font-medium">Mascota Baja</p>
                   <p className="text-sm text-gray-500 mt-2">
-                    No se pueden agregar nuevos registros al historial de una mascota fallecida
+                    No se pueden agregar nuevos registros al historial de una mascota Baja
                   </p>
                   {selectedPetInfo?.deceasedDate && (
                     <p className="text-xs text-gray-400 mt-3">
@@ -1252,7 +1338,7 @@ export default function MedicalHistoryModule() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-red-800 flex items-center gap-2">
-              <Skull className="h-5 w-5" /> Marcar Mascota como Fallecida
+              <Archive className="h-5 w-5" /> Marcar Mascota como Baja
             </DialogTitle>
             <DialogDescription>
               {selectedPetId && `${getPetName(selectedPetId)} — Esta acción bloqueará el historial clínico`}
@@ -1264,7 +1350,7 @@ export default function MedicalHistoryModule() {
               <div className="flex gap-2">
                 <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
                 <div className="text-sm text-amber-800">
-                  <strong>Importante:</strong> Una vez marcada como fallecida, no podrá agregar ni modificar registros en el historial clínico de esta mascota.
+                  <strong>Importante:</strong> Una vez dada de baja, no podrá agregar ni modificar registros en el historial clínico de esta mascota.
                 </div>
               </div>
             </div>
@@ -1326,7 +1412,7 @@ export default function MedicalHistoryModule() {
                 disabled={!deceasedForm.deceasedReason.trim()}
                 className="flex-1 bg-red-600 hover:bg-red-700"
               >
-                <Skull className="mr-2 h-4 w-4" />
+                <Archive className="mr-2 h-4 w-4" />
                 Confirmar Fallecimiento
               </Button>
               <Button

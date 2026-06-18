@@ -10,6 +10,8 @@ import {
   ValidarUnicidadCliente,
 } from "../../services/clienteService";
 import { traerMascotas } from "../../services/mascotaService";
+import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
+import { collection, onSnapshot, query, where, orderBy, Timestamp } from "firebase/firestore";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -59,14 +61,46 @@ export default function ClientsModule() {
   });
 
   useEffect(() => {
-    traerClientes().then(setClients).catch(() => {
-      const saved = localStorage.getItem("veterinaria_clients");
-      setClients(saved ? JSON.parse(saved) : initialClients);
-    });
-    traerMascotas().then(setPets).catch(() => {
-      const savedPets = localStorage.getItem("veterinaria_pets");
-      setPets(savedPets ? JSON.parse(savedPets) : initialPets);
-    });
+    if (FIREBASE_CONFIGURED && db) {
+      // Real-time clients subscription
+      const qClients = query(collection(db, "clientes"), where("deleted", "==", false), orderBy("fullName"));
+      const unsubClients = onSnapshot(qClients, (snap) => {
+        setClients(snap.docs.map(d => {
+          const data = d.data();
+          return {
+            id: d.id,
+            fullName: data.fullName ?? "",
+            dniCuit: data.dniCuit ?? "",
+            phone: data.phone ?? "",
+            address: data.address,
+            email: data.email,
+            observations: data.observations,
+            createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
+            createdBy: data.createdBy ?? "",
+            updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toDate() : undefined,
+            deleted: data.deleted ?? false,
+          } as Client;
+        }));
+      }, () => {
+        const saved = localStorage.getItem("veterinaria_clients");
+        setClients(saved ? JSON.parse(saved) : initialClients);
+      });
+      // Pets for deletion check
+      traerMascotas().then(setPets).catch(() => {
+        const saved = localStorage.getItem("veterinaria_pets");
+        setPets(saved ? JSON.parse(saved) : initialPets);
+      });
+      return () => unsubClients();
+    } else {
+      traerClientes().then(setClients).catch(() => {
+        const saved = localStorage.getItem("veterinaria_clients");
+        setClients(saved ? JSON.parse(saved) : initialClients);
+      });
+      traerMascotas().then(setPets).catch(() => {
+        const saved = localStorage.getItem("veterinaria_pets");
+        setPets(saved ? JSON.parse(saved) : initialPets);
+      });
+    }
   }, []);
 
   const filteredClients = useMemo(() => {
