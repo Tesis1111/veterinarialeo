@@ -12,7 +12,7 @@ import {
 } from "../../services/historialService";
 import { traerClientes } from "../../services/clienteService";
 import { traerMascotas } from "../../services/mascotaService";
-import { traerTiposEvento, traerVacunasPorEspecie } from "../../services/parametrosService";
+import { suscribirTiposEvento, traerVacunasPorEspecie } from "../../services/parametrosService";
 import { traerDoctores } from "../../services/doctorService";
 import { TipoEvento, VacunaParametro, DoctorPerfil } from "../../types";
 import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
@@ -140,7 +140,7 @@ export default function MedicalHistoryModule() {
       });
       traerClientes().then(setClients).catch(() => setClients(initialClients));
       traerMascotas().then(setPets).catch(() => setPets(initialPets));
-      traerTiposEvento().then(setTiposEvento).catch(() => setTiposEvento([]));
+      suscribirTiposEvento(setTiposEvento);
       traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
       return () => unsub();
     } else {
@@ -156,7 +156,7 @@ export default function MedicalHistoryModule() {
         const saved = localStorage.getItem("veterinaria_pets");
         setPets(saved ? JSON.parse(saved) : initialPets);
       });
-      traerTiposEvento().then(setTiposEvento).catch(() => setTiposEvento([]));
+      suscribirTiposEvento(setTiposEvento);
       traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
     }
   }, []);

@@ -11,14 +11,13 @@ import {
 import { traerClientes } from "../../services/clienteService";
 import { traerMascotas } from "../../services/mascotaService";
 import { traerTodosLosHorarios } from "../../services/horarioService";
-import { traerTiposEvento } from "../../services/parametrosService";
+import { suscribirTiposEvento } from "../../services/parametrosService";
 import { traerDoctores } from "../../services/doctorService";
 import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
 import {
   collection, addDoc, updateDoc, doc, onSnapshot, serverTimestamp, Timestamp, query, orderBy,
 } from "firebase/firestore";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
@@ -126,11 +125,27 @@ export default function AppointmentsModule() {
         setPets(saved ? JSON.parse(saved) : initialPets);
       });
       traerTodosLosHorarios().then(setDoctorSchedules).catch(() => setDoctorSchedules([]));
-      traerTiposEvento().then(setTiposEvento).catch(() => setTiposEvento([]));
-      traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
+      suscribirTiposEvento(setTiposEvento);
+
+      // Real-time doctors subscription so new vets appear automatically
+      const unsubDoctors = onSnapshot(
+        query(collection(db, "doctores"), where("available", "==", true)),
+        (snap) => {
+          setDoctoresPerfil(snap.docs.map(d => ({
+            id: d.id,
+            fullName: d.data().fullName ?? d.data().name ?? "",
+            specialty: d.data().specialty ?? "",
+            licenseNumber: d.data().licenseNumber,
+            userId: d.data().userId,
+            available: d.data().available !== false,
+            createdAt: d.data().createdAt instanceof Timestamp ? d.data().createdAt.toDate() : new Date(),
+          })));
+        },
+        () => traerDoctores().then(setDoctoresPerfil)
+      );
       const savedDoctors = localStorage.getItem("veterinaria_doctors");
       setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
-      return () => unsub();
+      return () => { unsub(); unsubDoctors(); };
     } else {
       // localStorage fallback
       const saved = localStorage.getItem("veterinaria_appointments");
@@ -141,7 +156,7 @@ export default function AppointmentsModule() {
       setPets(savedPets ? JSON.parse(savedPets) : initialPets);
       const savedDoctors = localStorage.getItem("veterinaria_doctors");
       setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
-      traerTiposEvento().then(setTiposEvento).catch(() => setTiposEvento([]));
+      suscribirTiposEvento(setTiposEvento);
       traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
     }
   }, []);
@@ -330,7 +345,8 @@ export default function AppointmentsModule() {
   // ── Guardar ──────────────────────────────────────
   const handleSave = async () => {
     const validation = validateAppointmentFields(
-      formData.type, formData.clientId, formData.petId, formData.reason,
+      formData.type, formData.clientId, formData.petId,
+      "skip", // reason field removed from UI — always skip this validation
       formData.doctorId, formData.startTime, formData.dateFrom, formData.dateTo
     );
     if (!validation.isValid) { toast.error(validation.error); return; }
@@ -952,15 +968,6 @@ export default function AppointmentsModule() {
                     </div>
                   </div>
                 )}
-
-                <div className="space-y-2">
-                  <Label>Motivo de la Consulta <span className="text-red-500">*</span></Label>
-                  <Input
-                    value={formData.reason}
-                    onChange={(e) => setFormData(prev => ({ ...prev, reason: e.target.value }))}
-                    placeholder="Ej: Control anual, vacunación, peluquería..."
-                  />
-                </div>
 
                 <div className="space-y-2">
                   <Label>Notas Adicionales (opcional)</Label>

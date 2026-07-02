@@ -11,7 +11,7 @@ import {
   ValidarUnicidadMascota,
 } from "../../services/mascotaService";
 import { traerClientes } from "../../services/clienteService";
-import { traerEspecies, traerTodasLasRazas } from "../../services/parametrosService";
+import { suscribirEspecies, suscribirRazas } from "../../services/parametrosService";
 import { EspecieParametro, RazaParametro } from "../../types";
 import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
 import { collection, onSnapshot, query, where, orderBy, Timestamp } from "firebase/firestore";
@@ -129,11 +129,12 @@ export default function PetsModuleEnhanced() {
         setPets(saved ? JSON.parse(saved) : initialPets);
       });
       traerClientes().then(setClients).catch(() => setClients(initialClients));
-      traerEspecies().then(setEspecies).catch(() => {
+      // Real-time species and breeds so new ones from Parámetros appear automatically
+      const unsubEspecies = suscribirEspecies(setEspecies, () => {
         setEspecies(PREDEFINED_SPECIES.map(s => ({ id: s.id, name: s.name, icon: s.icon, description: s.description, active: true, createdAt: new Date() })));
       });
-      traerTodasLasRazas().then(setTodasLasRazas).catch(() => setTodasLasRazas([]));
-      return () => unsubPets();
+      const unsubRazas = suscribirRazas(setTodasLasRazas);
+      return () => { unsubPets(); unsubEspecies(); unsubRazas(); };
     } else {
       traerMascotas().then(loaded => {
         const migrated = loaded.map((pet: any) => ({
@@ -151,10 +152,10 @@ export default function PetsModuleEnhanced() {
         const savedClients = localStorage.getItem("veterinaria_clients");
         setClients(savedClients ? JSON.parse(savedClients) : initialClients);
       });
-      traerEspecies().then(setEspecies).catch(() => {
+      suscribirEspecies(setEspecies, () => {
         setEspecies(PREDEFINED_SPECIES.map(s => ({ id: s.id, name: s.name, icon: s.icon, description: s.description, active: true, createdAt: new Date() })));
       });
-      traerTodasLasRazas().then(setTodasLasRazas).catch(() => setTodasLasRazas([]));
+      suscribirRazas(setTodasLasRazas);
     }
   }, []);
 

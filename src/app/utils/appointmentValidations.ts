@@ -91,22 +91,24 @@ export function canDeleteAppointment(appointment: Appointment): ValidationResult
 }
 
 /**
- * Valida todos los campos requeridos de un turno
+ * Valida todos los campos requeridos de un turno.
+ * El parámetro `reason` se mantiene por compatibilidad pero ya no se valida
+ * (el campo fue eliminado de la UI — el motivo se registra como tipo de evento).
  */
 export function validateAppointmentFields(
   type: AppointmentType,
   clientId: string,
   petId: string,
-  reason: string,
+  reason: string, // kept for compatibility, not validated
   doctorId?: string,
   startTime?: string,
   dateFrom?: Date,
   dateTo?: Date
 ): ValidationResult {
-  if (!clientId || !petId || !reason) {
+  if (!clientId || !petId) {
     return {
       isValid: false,
-      error: "Complete todos los campos obligatorios (Cliente, Mascota, Motivo)."
+      error: "Complete los campos obligatorios: Cliente y Mascota."
     };
   }
 
