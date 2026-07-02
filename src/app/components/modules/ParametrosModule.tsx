@@ -124,10 +124,10 @@ export default function ParametrosModule() {
     if (!especieForm.name.trim()) { toast.error("El nombre es obligatorio"); return; }
     try {
       if (editingEspecie) {
-        await modificarEspecie(editingEspecie.id, { name: especieForm.name.trim(), icon: especieForm.icon || "🐾", description: especieForm.description || undefined });
+        await modificarEspecie(editingEspecie.id, { name: especieForm.name.trim(), icon: especieForm.icon || "🐾", description: especieForm.description || "" });
         toast.success("Especie actualizada");
       } else {
-        await registrarEspecie({ name: especieForm.name.trim(), icon: especieForm.icon || "🐾", description: especieForm.description || undefined, active: true }, user!.id);
+        await registrarEspecie({ name: especieForm.name.trim(), icon: especieForm.icon || "🐾", description: especieForm.description || "", active: true }, user!.id);
         toast.success("Especie creada");
       }
       // onSnapshot actualiza la lista automáticamente — no necesitamos setEspecies manual
@@ -170,10 +170,10 @@ export default function ParametrosModule() {
     if (!razaForm.name.trim()) { toast.error("El nombre es obligatorio"); return; }
     try {
       if (editingRaza) {
-        await modificarRaza(editingRaza.id, { name: razaForm.name.trim(), description: razaForm.description || undefined });
+        await modificarRaza(editingRaza.id, { name: razaForm.name.trim(), description: razaForm.description || "" });
         toast.success("Raza actualizada");
       } else {
-        await registrarRaza({ name: razaForm.name.trim(), especieId: razaForm.especieId, description: razaForm.description || undefined, active: true }, user!.id);
+        await registrarRaza({ name: razaForm.name.trim(), especieId: razaForm.especieId, description: razaForm.description || "", active: true }, user!.id);
         toast.success("Raza creada");
       }
       // onSnapshot actualiza la lista automáticamente

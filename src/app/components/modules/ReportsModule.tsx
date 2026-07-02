@@ -19,7 +19,6 @@ import {
 import { format, startOfMonth, endOfMonth, subMonths, isWithinInterval } from "date-fns";
 import { es } from "date-fns/locale";
 import { toast } from "sonner";
-import { initialClients, initialPets, initialMedicalRecords, initialAppointments, doctors } from "../../data/mockData";
 import { exportToPDF, exportToExcel } from "../../utils/exportUtils";
 import CustomReportBuilder from "./CustomReportBuilder";
 
@@ -56,14 +55,11 @@ export default function ReportsModule() {
   const [calendarToOpen, setCalendarToOpen] = useState(false);
 
   useEffect(() => {
-    const savedClients = localStorage.getItem("veterinaria_clients");
-    const savedPets = localStorage.getItem("veterinaria_pets");
-    const savedRecords = localStorage.getItem("veterinaria_medical_records");
-    const savedAppointments = localStorage.getItem("veterinaria_appointments");
-    setClients(savedClients ? JSON.parse(savedClients) : initialClients);
-    setPets(savedPets ? JSON.parse(savedPets) : initialPets);
-    setMedicalRecords(savedRecords ? JSON.parse(savedRecords) : initialMedicalRecords);
-    setAppointments(savedAppointments ? JSON.parse(savedAppointments) : initialAppointments);
+    // Load from Firestore via services
+    import("../../services/clienteService").then(m => m.traerClientes()).then(setClients).catch(() => setClients([]));
+    import("../../services/mascotaService").then(m => m.traerMascotas()).then(setPets).catch(() => setPets([]));
+    import("../../services/historialService").then(m => m.traerTodosLosHistoriales()).then(setMedicalRecords).catch(() => setMedicalRecords([]));
+    import("../../services/turnoService").then(m => m.traerTurnos()).then(setAppointments).catch(() => setAppointments([]));
   }, []);
 
   const filteredRecords = useMemo(() => {

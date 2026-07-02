@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { User, Doctor, DoctorSchedule, DoctorPerfil } from "../../types";
-import { doctors as initialDoctors } from "../../data/mockData";
 import {
   traerUsuarios,
   registrarUsuario,
@@ -19,6 +18,7 @@ import {
   traerTodosLosHorarios,
   registrarHorario,
   desactivarHorario,
+  eliminarHorario,
   validarHorario,
 } from "../../services/horarioService";
 import { Button } from "../ui/button";
@@ -169,8 +169,7 @@ export default function UsersModule() {
   useEffect(() => {
     traerUsuarios().then(setUsers).catch(() => {});
     traerTodosLosHorarios().then(setSchedules).catch(() => {
-      const saved = localStorage.getItem("veterinaria_doctor_schedules");
-      setSchedules(saved ? JSON.parse(saved) : []);
+      
     });
     // Load doctors from Firestore (fallback to localStorage)
     traerTodosLosDoctores().then(d => {
@@ -178,8 +177,7 @@ export default function UsersModule() {
       // Keep legacy doctors state synced for schedule management
       setDoctors(d.map(dp => ({ id: dp.id, userId: dp.userId ?? "", name: dp.fullName, specialty: dp.specialty, available: dp.available, createdAt: dp.createdAt })) as any);
     }).catch(() => {
-      const savedDoctors = localStorage.getItem("veterinaria_doctors");
-      setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
+      
     });
   }, []);
 
@@ -244,16 +242,63 @@ export default function UsersModule() {
     // Build fullName from nombre + apellido
     const nombre = formData.nombre.trim();
     const apellido = formData.apellido.trim();
-    if (!nombre) { toast.error("El nombre es obligatorio"); return; }
-    if (!formData.email) { toast.error("El email es obligatorio"); return; }
-    if (!formData.role) { toast.error("El perfil/rol es obligatorio"); return; }
+    const validationErrors: string[] = [];
+
+    if (!nombre) validationErrors.push("El nombre es obligatorio.");
+    if (!apellido) validationErrors.push("El apellido es obligatorio.");
+
+    // Email: regex validation
+    const emailRegex = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+    if (!formData.email) {
+      validationErrors.push("El correo electrónico es obligatorio.");
+    } else if (!emailRegex.test(formData.email.trim())) {
+      validationErrors.push("El formato del correo electrónico no es válido.");
+    }
+
+    // Phone: digits, spaces, +, -, ()
+    const phoneRegex = /^[\d\s\+\-\(\)\.]{7,20}$/;
+    if (formData.phone && !phoneRegex.test(formData.phone.trim())) {
+      validationErrors.push("El teléfono solo puede contener números, espacios y los signos +, -, (, ).");
+    }
+
+    // Domicilio: must not look like an email; minimum length if provided
+    if (formData.domicilio) {
+      if (emailRegex.test(formData.domicilio.trim())) {
+        validationErrors.push("El campo Domicilio no puede contener un email. Ingresá una dirección postal.");
+      } else if (formData.domicilio.trim().length < 5) {
+        validationErrors.push("El domicilio debe tener al menos 5 caracteres.");
+      } else if (formData.domicilio.trim().length > 120) {
+        validationErrors.push("El domicilio no puede superar los 120 caracteres.");
+      }
+    }
+
+    // Username: no spaces, no special chars other than . _ -
+    if (formData.username.trim()) {
+      const usernameRegex = /^[a-zA-Z0-9._\-]{3,30}$/;
+      if (!usernameRegex.test(formData.username.trim())) {
+        validationErrors.push("El nombre de usuario solo puede contener letras, números y los signos . _ - (3-30 caracteres).");
+      }
+    }
+
+    // License number: alphanumeric if provided
+    if (formData.licenseNumber && !/^[a-zA-Z0-9\s\-\.]{2,20}$/.test(formData.licenseNumber.trim())) {
+      validationErrors.push("El número de matrícula tiene un formato inválido.");
+    }
+
+    if (!formData.role) validationErrors.push("El perfil/rol es obligatorio.");
+
+    if (validationErrors.length > 0) {
+      validationErrors.forEach(msg => toast.error(msg));
+      return;
+    }
+
     const fullName = apellido ? `${nombre} ${apellido}` : nombre;
     const username = formData.username.trim() || formData.email.split("@")[0];
     formData.fullName = fullName;
     formData.username = username;
 
     // validarUnicidadUsuario — Gestor Usuarios y Permisos
-    const uniqueCheck = await validarUnicidadUsuario(formData.username, formData.email, selectedUser?.id);
+    const uniqueCheck = await validarUnicidadUsuario(formData.username, formData.email.trim(), selectedUser?.id);
     if (!uniqueCheck.valid) {
       toast.error(uniqueCheck.errors[0]?.message || "El usuario o email ya están en uso");
       return;
@@ -394,7 +439,7 @@ export default function UsersModule() {
   const handleDeleteSchedule = async () => {
     if (selectedSchedule) {
       try {
-        await desactivarHorario(selectedSchedule.id);
+        await eliminarHorario(selectedSchedule.id);
         setSchedules(prev => prev.filter(s => s.id !== selectedSchedule.id));
         toast.success("Horario eliminado");
       } catch {

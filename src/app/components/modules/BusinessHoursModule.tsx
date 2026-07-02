@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { Doctor, DoctorSchedule } from "../../types";
-import { doctors as initialDoctors } from "../../data/mockData";
 import {
   traerTodosLosHorarios,
   registrarHorario,
   desactivarHorario,
+  eliminarHorario,
   validarHorario,
 } from "../../services/horarioService";
 import { Button } from "../ui/button";
@@ -50,11 +50,9 @@ export default function BusinessHoursModule() {
 
   useEffect(() => {
     traerTodosLosHorarios().then(setSchedules).catch(() => {
-      const saved = localStorage.getItem("veterinaria_doctor_schedules");
-      setSchedules(saved ? JSON.parse(saved) : []);
+      
     });
-    const savedDoctors = localStorage.getItem("veterinaria_doctors");
-    setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
+    
   }, []);
 
   if (!isAdmin) {
@@ -128,7 +126,7 @@ export default function BusinessHoursModule() {
   const handleDeleteSchedule = async () => {
     if (selectedSchedule) {
       try {
-        await desactivarHorario(selectedSchedule.id);
+        await eliminarHorario(selectedSchedule.id);
         setSchedules(prev => prev.filter(s => s.id !== selectedSchedule.id));
         toast.success("Horario eliminado");
       } catch {

@@ -18,7 +18,7 @@ import {
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
-import { db, FIREBASE_CONFIGURED } from "../firebase/config";
+import { db } from "../firebase/config";
 import {
   MedicalRecord,
   MedicalRecordFormData,
@@ -64,21 +64,7 @@ function toRecord(id: string, data: Record<string, any>): MedicalRecord {
   };
 }
 
-// ── localStorage fallback ───────────────────────────────────────────────────
-
-const LS_KEY = "veterinaria_medical_records";
-
-function lsLoad(): MedicalRecord[] {
-  try {
-    return JSON.parse(localStorage.getItem(LS_KEY) || "[]");
-  } catch {
-    return [];
-  }
-}
-
-function lsSave(records: MedicalRecord[]) {
-  localStorage.setItem(LS_KEY, JSON.stringify(records));
-}
+function requireDb(op: string) { if (!db) throw new Error(`[historialService] Firebase no configurado: ${op}`); }
 
 // ─────────────────────────────────────────────────────────────────────────
 // Gestor Alta Historial
@@ -121,29 +107,13 @@ export async function registrarHistorial(
     attachments,
     deleted: false,
     createdBy,
-    createdAt: FIREBASE_CONFIGURED ? serverTimestamp() : new Date(),
+    createdAt: serverTimestamp(),
   };
 
-  if (FIREBASE_CONFIGURED && db) {
-    const ref = await addDoc(collection(db, COL), payload);
+  if (db) {
+    const ref = await addDoc(collection(db!, COL), payload);
     return { id: ref.id, ...payload, createdAt: new Date() } as MedicalRecord;
   }
-
-  const records = lsLoad();
-  const newRecord: MedicalRecord = {
-    id: Date.now().toString(),
-    ...data,
-    date: data.date ? new Date(data.date) : new Date(),
-    nextAppointmentDate: data.nextAppointmentDate ? new Date(data.nextAppointmentDate) : undefined,
-    clientIdAtTime,
-    clientNameAtTime,
-    attachments,
-    deleted: false,
-    createdBy,
-    createdAt: new Date(),
-  };
-  lsSave([...records, newRecord]);
-  return newRecord;
 }
 
 /**
@@ -171,19 +141,9 @@ export async function guardarArchivo(
       };
 
       // Patch the record in Firestore with the new attachment
-      if (FIREBASE_CONFIGURED && db) {
+      if (db) {
         const { arrayUnion } = await import("firebase/firestore");
-        await updateDoc(doc(db, COL, recordId), {
-          attachments: arrayUnion(attachment),
-        });
-      } else {
-        // Patch in localStorage
-        const records = lsLoad();
-        const idx = records.findIndex((r) => r.id === recordId);
-        if (idx !== -1) {
-          records[idx].attachments = [...(records[idx].attachments ?? []), attachment];
-          lsSave(records);
-        }
+        await updateDoc(doc(db!, COL, recordId), { attachments: arrayUnion(attachment) });
       }
 
       resolve(attachment);
@@ -199,36 +159,19 @@ export async function guardarArchivo(
 
 /** Trae el historial clínico de una mascota, ordenado por fecha descendente. */
 export async function traerHistorial(petId: string): Promise<MedicalRecord[]> {
-  if (FIREBASE_CONFIGURED && db) {
-    const q = query(
-      collection(db, COL),
-      where("petId", "==", petId),
-      where("deleted", "==", false),
-      orderBy("date", "desc")
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => toRecord(d.id, d.data()));
-  }
-
-  return lsLoad()
-    .filter((r) => r.petId === petId && !r.deleted)
+  requireDb("traerHistorial");
+  const snap = await getDocs(query(collection(db!, COL), where("petId", "==", petId)));
+  return snap.docs.map(d => toRecord(d.id, d.data()))
+    .filter(r => !r.deleted)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
 /** Trae todos los registros (para reportes/auditoría). */
 export async function traerTodosLosHistoriales(): Promise<MedicalRecord[]> {
-  if (FIREBASE_CONFIGURED && db) {
-    const q = query(
-      collection(db, COL),
-      where("deleted", "==", false),
-      orderBy("date", "desc")
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => toRecord(d.id, d.data()));
-  }
-
-  return lsLoad()
-    .filter((r) => !r.deleted)
+  requireDb("traerTodosLosHistoriales");
+  const snap = await getDocs(collection(db!, COL));
+  return snap.docs.map(d => toRecord(d.id, d.data()))
+    .filter(r => !r.deleted)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
@@ -264,28 +207,13 @@ export function exportarCSV(records: MedicalRecord[], filename = "historial_clin
 
 /** Soft-delete de registro. */
 export async function eliminarHistorial(id: string, deletedBy: string): Promise<void> {
-  if (FIREBASE_CONFIGURED && db) {
-    await updateDoc(doc(db, COL, id), {
-      deleted: true,
-      deletedBy,
-      deletedAt: serverTimestamp(),
-    });
-    return;
-  }
-
-  const records = lsLoad();
-  const idx = records.findIndex((r) => r.id === id);
-  if (idx !== -1) {
-    records[idx] = { ...records[idx], deleted: true, deletedBy, deletedAt: new Date() };
-    lsSave(records);
-  }
+  requireDb("eliminarHistorial");
+  await updateDoc(doc(db!, COL, id), { deleted: true, deletedBy, deletedAt: serverTimestamp() });
 }
 
 export async function traerHistorialPorId(id: string): Promise<MedicalRecord | null> {
-  if (FIREBASE_CONFIGURED && db) {
-    const snap = await getDoc(doc(db, COL, id));
-    return snap.exists() ? toRecord(snap.id, snap.data()) : null;
-  }
-
-  return lsLoad().find((r) => r.id === id) ?? null;
+  requireDb("traerHistorialPorId");
+  const { getDoc } = await import("firebase/firestore");
+  const snap = await getDoc(doc(db!, COL, id));
+  return snap.exists() ? toRecord(snap.id, snap.data()) : null;
 }

@@ -18,6 +18,7 @@ import AccessibilityButton from "./components/AccessibilityButton";
 import InstallPrompt from "./components/InstallPrompt";
 import OfflineIndicator from "./components/OfflineIndicator";
 import AdminGuard from "./components/AdminGuard";
+import ErrorBoundary from "./components/ErrorBoundary";
 import ParametrosModule from "./components/modules/ParametrosModule";
 import { registerServiceWorker } from "./utils/registerServiceWorker";
 import { PawPrint } from "lucide-react";
@@ -81,15 +82,15 @@ function AppContent() {
 
       <main className="container mx-auto px-3 sm:px-4 md:px-6 py-4 md:py-6 lg:py-8 max-w-7xl">
 
-        {/* ── Public modules (all authenticated users) ─────────────── */}
+        {/* ── Public modules — each wrapped in ErrorBoundary ─────────── */}
         {activeModule === "dashboard" && (
-          <Dashboard setActiveModule={setActiveModule} />
+          <ErrorBoundary><Dashboard setActiveModule={setActiveModule} /></ErrorBoundary>
         )}
 
-        {activeModule === "clients" && <ClientsModule />}
-        {activeModule === "pets" && <PetsModuleEnhanced />}
-        {activeModule === "medical" && <MedicalHistoryModule />}
-        {activeModule === "appointments" && <AppointmentsModule />}
+        {activeModule === "clients" && <ErrorBoundary><ClientsModule /></ErrorBoundary>}
+        {activeModule === "pets" && <ErrorBoundary><PetsModuleEnhanced /></ErrorBoundary>}
+        {activeModule === "medical" && <ErrorBoundary><MedicalHistoryModule /></ErrorBoundary>}
+        {activeModule === "appointments" && <ErrorBoundary><AppointmentsModule /></ErrorBoundary>}
         {activeModule === "profile" && (
           <UserProfile setActiveModule={setActiveModule} />
         )}

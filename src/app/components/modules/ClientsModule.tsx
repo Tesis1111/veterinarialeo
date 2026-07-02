@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { Client, Pet } from "../../types";
-import { initialClients, initialPets } from "../../data/mockData";
 import {
   traerClientes,
   registrarCliente,
@@ -82,23 +81,19 @@ export default function ClientsModule() {
           } as Client;
         }));
       }, () => {
-        const saved = localStorage.getItem("veterinaria_clients");
-        setClients(saved ? JSON.parse(saved) : initialClients);
+        
       });
       // Pets for deletion check
       traerMascotas().then(setPets).catch(() => {
-        const saved = localStorage.getItem("veterinaria_pets");
-        setPets(saved ? JSON.parse(saved) : initialPets);
+        
       });
       return () => unsubClients();
     } else {
       traerClientes().then(setClients).catch(() => {
-        const saved = localStorage.getItem("veterinaria_clients");
-        setClients(saved ? JSON.parse(saved) : initialClients);
+        
       });
       traerMascotas().then(setPets).catch(() => {
-        const saved = localStorage.getItem("veterinaria_pets");
-        setPets(saved ? JSON.parse(saved) : initialPets);
+        
       });
     }
   }, []);

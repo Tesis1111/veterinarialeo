@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { useAudit } from "../../context/AuditContext";
 import { Pet, Client, PetOwnershipChange } from "../../types";
-import { initialPets, initialClients } from "../../data/mockData";
 import {
   traerMascotas,
   registrarMascota,
@@ -32,12 +31,6 @@ import { Search, PawPrint, Save, X, Trash2, Edit, Calendar as CalendarIcon, Info
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-// Static data kept as fallback only; dynamic data loaded from parametrosService
-import {
-  PREDEFINED_SPECIES,
-  getSpeciesName as getSpeciesNameStatic,
-  getBreedName as getBreedNameStatic,
-} from "../../data/speciesAndBreeds";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
 
 export default function PetsModuleEnhanced() {
@@ -125,13 +118,12 @@ export default function PetsModuleEnhanced() {
         });
         setPets(migrated);
       }, () => {
-        const saved = localStorage.getItem("veterinaria_pets");
-        setPets(saved ? JSON.parse(saved) : initialPets);
+        
       });
-      traerClientes().then(setClients).catch(() => setClients(initialClients));
+      traerClientes().then(setClients).catch(() => {});
       // Real-time species and breeds so new ones from Parámetros appear automatically
       const unsubEspecies = suscribirEspecies(setEspecies, () => {
-        setEspecies(PREDEFINED_SPECIES.map(s => ({ id: s.id, name: s.name, icon: s.icon, description: s.description, active: true, createdAt: new Date() })));
+        setEspecies([]);
       });
       const unsubRazas = suscribirRazas(setTodasLasRazas);
       return () => { unsubPets(); unsubEspecies(); unsubRazas(); };
@@ -143,18 +135,12 @@ export default function PetsModuleEnhanced() {
           ownershipHistory: pet.ownershipHistory || [],
         }));
         setPets(migrated);
-      }).catch(() => {
-        const savedPets = localStorage.getItem("veterinaria_pets");
-        const loadedPets = savedPets ? JSON.parse(savedPets) : initialPets;
-        setPets(loadedPets.map((pet: any) => ({ ...pet, deceased: pet.deceased || false, ownershipHistory: pet.ownershipHistory || [] })));
+      }).catch((err) => {
+        console.error("[PetsModule] Error cargando mascotas:", err);
+        setPets([]);
       });
-      traerClientes().then(setClients).catch(() => {
-        const savedClients = localStorage.getItem("veterinaria_clients");
-        setClients(savedClients ? JSON.parse(savedClients) : initialClients);
-      });
-      suscribirEspecies(setEspecies, () => {
-        setEspecies(PREDEFINED_SPECIES.map(s => ({ id: s.id, name: s.name, icon: s.icon, description: s.description, active: true, createdAt: new Date() })));
-      });
+      traerClientes().then(setClients).catch(() => setClients([]));
+      suscribirEspecies(setEspecies);
       suscribirRazas(setTodasLasRazas);
     }
   }, []);
@@ -609,7 +595,7 @@ export default function PetsModuleEnhanced() {
                   <SelectValue placeholder="Seleccione especie" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(especies.length > 0 ? especies : PREDEFINED_SPECIES).map(species => (
+                  {especies.map(species => (
                     <SelectItem key={species.id} value={species.id}>
                       {(species as any).icon} {species.name}
                     </SelectItem>
@@ -782,7 +768,7 @@ export default function PetsModuleEnhanced() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todas las especies</SelectItem>
-                    {(especies.length > 0 ? especies : PREDEFINED_SPECIES).map(species => (
+                    {especies.map(species => (
                       <SelectItem key={species.id} value={(species as any).name ?? species.name}>
                         {(species as any).icon} {species.name}
                       </SelectItem>

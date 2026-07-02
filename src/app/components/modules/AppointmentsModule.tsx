@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { useAudit } from "../../context/AuditContext";
 import { Appointment, Client, Pet, AppointmentType, AppointmentStatus, Doctor, DoctorSchedule, TipoEvento, DoctorPerfil } from "../../types";
-import { initialAppointments, initialClients, initialPets, doctors as initialDoctors } from "../../data/mockData";
 import {
   registrarTurno,
   modificarTurno,
@@ -15,7 +14,7 @@ import { suscribirTiposEvento } from "../../services/parametrosService";
 import { traerDoctores } from "../../services/doctorService";
 import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
 import {
-  collection, addDoc, updateDoc, doc, onSnapshot, serverTimestamp, Timestamp, query, orderBy, where ,
+  collection, addDoc, updateDoc, doc, onSnapshot, serverTimestamp, Timestamp, query, orderBy,
 } from "firebase/firestore";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
@@ -129,17 +128,14 @@ export default function AppointmentsModule() {
         setAppointments(appts);
       }, (err) => {
         console.error("[AppointmentsModule] onSnapshot error:", err);
-        const saved = localStorage.getItem("veterinaria_appointments");
-        setAppointments(saved ? JSON.parse(saved) : initialAppointments);
+        
       });
       // Load reference data (not real-time needed)
       traerClientes().then(setClients).catch(() => {
-        const saved = localStorage.getItem("veterinaria_clients");
-        setClients(saved ? JSON.parse(saved) : initialClients);
+        
       });
       traerMascotas().then(setPets).catch(() => {
-        const saved = localStorage.getItem("veterinaria_pets");
-        setPets(saved ? JSON.parse(saved) : initialPets);
+        
       });
       traerTodosLosHorarios().then(setDoctorSchedules).catch(() => setDoctorSchedules([]));
       suscribirTiposEvento(setTiposEvento);
@@ -160,21 +156,11 @@ export default function AppointmentsModule() {
         },
         () => traerDoctores().then(setDoctoresPerfil)
       );
-      const savedDoctors = localStorage.getItem("veterinaria_doctors");
-      setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
+      
       return () => { unsub(); unsubDoctors(); };
     } else {
-      // localStorage fallback
-      const saved = localStorage.getItem("veterinaria_appointments");
-      setAppointments(saved ? JSON.parse(saved) : initialAppointments);
-      const savedClients = localStorage.getItem("veterinaria_clients");
-      setClients(savedClients ? JSON.parse(savedClients) : initialClients);
-      const savedPets = localStorage.getItem("veterinaria_pets");
-      setPets(savedPets ? JSON.parse(savedPets) : initialPets);
-      const savedDoctors = localStorage.getItem("veterinaria_doctors");
-      setDoctors(savedDoctors ? JSON.parse(savedDoctors) : initialDoctors);
-      suscribirTiposEvento(setTiposEvento);
-      traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
+      // Firebase not configured — show empty state
+      console.warn("[AppointmentsModule] Firebase no configurado. Los datos no se cargarán.");
     }
   }, []);
 

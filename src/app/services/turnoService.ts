@@ -19,7 +19,7 @@ import {
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
-import { db, FIREBASE_CONFIGURED } from "../firebase/config";
+import { db } from "../firebase/config";
 import { Appointment, AppointmentFormData, DoctorSchedule, FormValidationResult, TimeSlot } from "../types";
 
 const COL = "turnos";
@@ -48,21 +48,6 @@ function toAppointment(id: string, data: Record<string, any>): Appointment {
   };
 }
 
-// ── localStorage fallback ───────────────────────────────────────────────────
-
-const LS_KEY = "veterinaria_appointments";
-
-function lsLoad(): Appointment[] {
-  try {
-    return JSON.parse(localStorage.getItem(LS_KEY) || "[]");
-  } catch {
-    return [];
-  }
-}
-
-function lsSave(appointments: Appointment[]) {
-  localStorage.setItem(LS_KEY, JSON.stringify(appointments));
-}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Gestor Alta Turnos
@@ -145,38 +130,18 @@ export async function validarDuplicados(
 ): Promise<FormValidationResult> {
   const errors = [];
 
-  if (FIREBASE_CONFIGURED && db) {
-    const q = query(
-      collection(db, COL),
-      where("petId", "==", petId),
-      where("date", "==", new Date(date + "T00:00:00")),
-      where("startTime", "==", startTime),
-      where("status", "in", ["Programado", "Confirmado"])
-    );
-    const snap = await getDocs(q);
-    const conflict = snap.docs.find((d) => d.id !== excludeId);
-    if (conflict) {
-      errors.push({
-        field: "petId",
-        message: "Ya existe un turno para esta mascota en ese horario.",
-      });
-    }
-  } else {
-    const appointments = lsLoad();
-    const conflict = appointments.find(
-      (a) =>
-        a.petId === petId &&
-        new Date(a.date).toDateString() === new Date(date + "T00:00:00").toDateString() &&
-        a.startTime === startTime &&
-        ["Programado", "Confirmado"].includes(a.status) &&
-        a.id !== excludeId
-    );
-    if (conflict) {
-      errors.push({
-        field: "petId",
-        message: "Ya existe un turno para esta mascota en ese horario.",
-      });
-    }
+  if (!db) { return { valid: true, errors: [] }; }
+  // Fetch all for this pet and filter client-side to avoid composite index
+  const snap = await getDocs(query(collection(db!, COL), where("petId", "==", petId)));
+  const conflict = snap.docs.find(d => {
+    const a = d.data();
+    return d.id !== excludeId &&
+      a.startTime === startTime &&
+      ["Programado", "Confirmado"].includes(a.status ?? "") &&
+      new Date(a.date?.toDate ? a.date.toDate() : a.date).toDateString() === new Date(date + "T00:00:00").toDateString();
+  });
+  if (conflict) {
+    errors.push({ field: "petId", message: "Ya existe un turno para esta mascota en ese horario." });
   }
 
   return { valid: errors.length === 0, errors };
@@ -188,28 +153,16 @@ export async function validarDuplicados(
 
 /** Retorna los turnos de una fecha específica ordenados por hora. */
 export async function mostrarCalendarioTurno(date: string): Promise<Appointment[]> {
-  if (FIREBASE_CONFIGURED && db) {
-    const start = new Date(date + "T00:00:00");
-    const end = new Date(date + "T23:59:59");
-    const q = query(
-      collection(db, COL),
-      where("date", ">=", start),
-      where("date", "<=", end),
-      orderBy("date"),
-      orderBy("startTime")
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => toAppointment(d.id, d.data()));
+  if (db) {
+    const snap = await getDocs(collection(db!, COL));
+    return snap.docs
+      .map(d => toAppointment(d.id, d.data()))
+      .filter(a => {
+        try { return new Date(a.date).toDateString() === new Date(date + "T00:00:00").toDateString() && a.status !== "Cancelado"; } catch { return false; }
+      })
+      .sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? ""));
   }
 
-  const appointments = lsLoad();
-  return appointments
-    .filter(
-      (a) =>
-        new Date(a.date).toDateString() === new Date(date + "T00:00:00").toDateString() &&
-        a.status !== "Cancelado"
-    )
-    .sort((a, b) => a.startTime.localeCompare(b.startTime));
 }
 
 /** Genera los slots disponibles de 30 min para un doctor en una fecha. */
@@ -318,107 +271,42 @@ export function detectarAlertas(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// CRUD
+// CRUD — exclusivamente Firestore
 // ─────────────────────────────────────────────────────────────────────────
 
-export async function registrarTurno(
-  data: AppointmentFormData,
-  createdBy: string
-): Promise<Appointment> {
-  const payload = {
-    ...data,
-    date: new Date(data.date + "T00:00:00"),
-    deleted: false,
-    createdBy,
-    createdAt: FIREBASE_CONFIGURED ? serverTimestamp() : new Date(),
-  };
-
-  if (FIREBASE_CONFIGURED && db) {
-    const ref = await addDoc(collection(db, COL), payload);
-    return { id: ref.id, ...data, date: new Date(data.date), createdBy, createdAt: new Date() } as Appointment;
-  }
-
-  const appointments = lsLoad();
-  const newAppt: Appointment = {
-    id: Date.now().toString(),
-    ...data,
-    date: new Date(data.date + "T00:00:00"),
-    createdBy,
-    createdAt: new Date(),
-  };
-  lsSave([...appointments, newAppt]);
-  return newAppt;
+function requireDb(op: string) {
+  if (!db) throw new Error(`[turnoService] Firebase no configurado. Operación: ${op}`);
 }
 
-export async function modificarTurno(
-  id: string,
-  data: Partial<AppointmentFormData>,
-  updatedBy: string
-): Promise<Appointment> {
-  if (FIREBASE_CONFIGURED && db) {
-    const ref = doc(db, COL, id);
-    await updateDoc(ref, { ...data, updatedBy, updatedAt: serverTimestamp() });
-    const snap = await getDoc(ref);
-    return toAppointment(id, snap.data() as Record<string, any>);
-  }
-
-  const appointments = lsLoad();
-  const idx = appointments.findIndex((a) => a.id === id);
-  if (idx === -1) throw new Error(`Turno ${id} no encontrado`);
-  const updated: Appointment = { ...appointments[idx], ...data, updatedBy, updatedAt: new Date() } as Appointment;
-  appointments[idx] = updated;
-  lsSave(appointments);
-  return updated;
+export async function registrarTurno(data: AppointmentFormData, createdBy: string): Promise<Appointment> {
+  requireDb("registrarTurno");
+  const payload = { ...data, date: new Date((data.date as any) + "T00:00:00"), deleted: false, createdBy, createdAt: serverTimestamp() };
+  const ref = await addDoc(collection(db!, COL), payload);
+  return { id: ref.id, ...data, date: new Date((data.date as any)), createdBy, createdAt: new Date() } as Appointment;
 }
 
-export async function cancelarTurno(
-  id: string,
-  reason: string,
-  updatedBy: string
-): Promise<void> {
-  if (FIREBASE_CONFIGURED && db) {
-    await updateDoc(doc(db, COL, id), {
-      status: "Cancelado",
-      cancellationReason: reason,
-      cancelledAt: serverTimestamp(),
-      updatedBy,
-      updatedAt: serverTimestamp(),
-    });
-    return;
-  }
-
-  const appointments = lsLoad();
-  const idx = appointments.findIndex((a) => a.id === id);
-  if (idx !== -1) {
-    appointments[idx] = {
-      ...appointments[idx],
-      status: "Cancelado",
-      cancellationReason: reason,
-      cancelledAt: new Date(),
-      updatedBy,
-      updatedAt: new Date(),
-    };
-    lsSave(appointments);
-  }
+export async function modificarTurno(id: string, data: Partial<AppointmentFormData>, updatedBy: string): Promise<Appointment> {
+  requireDb("modificarTurno");
+  const ref = doc(db!, COL, id);
+  await updateDoc(ref, { ...data, updatedBy, updatedAt: serverTimestamp() });
+  const snap = await getDoc(ref);
+  return toAppointment(id, snap.data() as Record<string, any>);
 }
 
-export async function traerTurnos(filters?: {
-  clientId?: string;
-  petId?: string;
-  doctorId?: string;
-  dateFrom?: string;
-  dateTo?: string;
-}): Promise<Appointment[]> {
-  if (FIREBASE_CONFIGURED && db) {
-    const constraints: Parameters<typeof query>[1][] = [orderBy("date", "desc")];
-    if (filters?.clientId) constraints.unshift(where("clientId", "==", filters.clientId));
-    if (filters?.petId) constraints.unshift(where("petId", "==", filters.petId));
-    const snap = await getDocs(query(collection(db, COL), ...constraints));
-    return snap.docs.map((d) => toAppointment(d.id, d.data()));
-  }
+export async function cancelarTurno(id: string, reason: string, updatedBy: string): Promise<void> {
+  requireDb("cancelarTurno");
+  await updateDoc(doc(db!, COL, id), {
+    status: "Cancelado", cancellationReason: reason,
+    cancelledAt: serverTimestamp(), updatedBy, updatedAt: serverTimestamp(),
+  });
+}
 
-  let appointments = lsLoad();
-  if (filters?.clientId) appointments = appointments.filter((a) => a.clientId === filters.clientId);
-  if (filters?.petId) appointments = appointments.filter((a) => a.petId === filters.petId);
-  return appointments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+export async function traerTurnos(filters?: { clientId?: string; petId?: string }): Promise<Appointment[]> {
+  requireDb("traerTurnos");
+  // Fetch all client-side to avoid composite index requirements
+  const snap = await getDocs(collection(db!, COL));
+  let appts = snap.docs.map(d => toAppointment(d.id, d.data()));
+  if (filters?.clientId) appts = appts.filter(a => a.clientId === filters.clientId);
+  if (filters?.petId) appts = appts.filter(a => a.petId === filters.petId);
+  return appts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }

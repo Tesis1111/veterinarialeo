@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { useAudit } from "../../context/AuditContext";
 import { MedicalRecord, Client, Pet, MedicalAttachment } from "../../types";
-import { initialMedicalRecords, initialClients, initialPets, doctors } from "../../data/mockData";
 import {
   traerHistorial,
   traerTodosLosHistoriales,
@@ -138,19 +137,18 @@ export default function MedicalHistoryModule() {
         setRecords(recs);
       }, (err) => {
         console.error("[MedicalHistory] onSnapshot historiales error:", err);
-        const saved = localStorage.getItem("veterinaria_medical_records");
-        setRecords(saved ? JSON.parse(saved) : initialMedicalRecords);
+        
       });
       // Real-time clientes y mascotas para que los selects siempre estén actualizados
       const unsubClients = onSnapshot(
         query(collection(db, "clientes"), where("deleted", "==", false)),
         (snap) => setClients(snap.docs.map(d => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt instanceof Timestamp ? d.data().createdAt.toDate() : new Date() } as any))),
-        () => traerClientes().then(setClients).catch(() => setClients(initialClients))
+        () => traerClientes().then(setClients).catch(() => {})
       );
       const unsubPets = onSnapshot(
         query(collection(db, "mascotas"), where("deleted", "==", false)),
         (snap) => setPets(snap.docs.map(d => ({ id: d.id, ...d.data(), deceased: d.data().deceased ?? false } as any))),
-        () => traerMascotas().then(setPets).catch(() => setPets(initialPets))
+        () => traerMascotas().then(setPets).catch(() => {})
       );
       suscribirTiposEvento(setTiposEvento);
       suscribirEspecies(setEspecies);
@@ -159,16 +157,13 @@ export default function MedicalHistoryModule() {
       return () => { unsub(); unsubClients(); unsubPets(); };
     } else {
       traerTodosLosHistoriales().then(setRecords).catch(() => {
-        const saved = localStorage.getItem("veterinaria_medical_records");
-        setRecords(saved ? JSON.parse(saved) : initialMedicalRecords);
+        
       });
       traerClientes().then(setClients).catch(() => {
-        const saved = localStorage.getItem("veterinaria_clients");
-        setClients(saved ? JSON.parse(saved) : initialClients);
+        
       });
       traerMascotas().then(setPets).catch(() => {
-        const saved = localStorage.getItem("veterinaria_pets");
-        setPets(saved ? JSON.parse(saved) : initialPets);
+        
       });
       suscribirTiposEvento(setTiposEvento);
       suscribirEspecies(setEspecies);
@@ -563,7 +558,6 @@ export default function MedicalHistoryModule() {
     );
 
     setPets(updatedPets);
-    localStorage.setItem("veterinaria_pets", JSON.stringify(updatedPets));
 
     addLog("Actualizar", "Mascotas", `Mascota ${getPetName(selectedPetId)} dada de baja`);
     toast.success(`${getPetName(selectedPetId)} ha sido dada de baja`);

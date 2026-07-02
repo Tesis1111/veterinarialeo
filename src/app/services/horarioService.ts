@@ -1,26 +1,17 @@
 /**
- * Módulo Horarios — Capa de Servicios
- *
- * Gestores implementados:
- *   • Gestor Alta Horario — validarHorario(), registrarHorario()
+ * horarioService.ts — Gestión de Horarios de Profesionales
+ * Fuente de datos: exclusivamente Firebase Firestore.
+ * Incluye eliminarHorario() para borrado definitivo del documento.
  */
 import {
-  collection,
-  doc,
-  getDocs,
-  addDoc,
-  updateDoc,
-  query,
-  where,
-  serverTimestamp,
-  Timestamp,
+  collection, doc, getDocs, addDoc, updateDoc, deleteDoc,
+  query, where, serverTimestamp, Timestamp,
 } from "firebase/firestore";
-import { db, FIREBASE_CONFIGURED } from "../firebase/config";
+import { db } from "../firebase/config";
 import { DoctorSchedule, FormValidationResult } from "../types";
 
 const COL = "horarios";
-
-// ── Conversion ──────────────────────────────────────────────────────────────
+const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 
 function toSchedule(id: string, data: Record<string, any>): DoctorSchedule {
   return {
@@ -35,29 +26,10 @@ function toSchedule(id: string, data: Record<string, any>): DoctorSchedule {
   };
 }
 
-// ── localStorage fallback ───────────────────────────────────────────────────
-
-const LS_KEY = "veterinaria_doctor_schedules";
-
-function lsLoad(): DoctorSchedule[] {
-  try {
-    return JSON.parse(localStorage.getItem(LS_KEY) || "[]");
-  } catch {
-    return [];
-  }
+function requireDb(op: string) {
+  if (!db) throw new Error(`[horarioService] Firebase no configurado. Operación: ${op}`);
 }
 
-function lsSave(schedules: DoctorSchedule[]) {
-  localStorage.setItem(LS_KEY, JSON.stringify(schedules));
-}
-
-const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
-
-// ─────────────────────────────────────────────────────────────────────────
-// Gestor Alta Horario
-// ─────────────────────────────────────────────────────────────────────────
-
-/** Valida que el horario tenga inicio < fin y no se superponga con horarios existentes. */
 export async function validarHorario(
   doctorId: string,
   dayOfWeek: number,
@@ -66,115 +38,58 @@ export async function validarHorario(
   excludeId?: string
 ): Promise<FormValidationResult> {
   const errors = [];
-
+  if (!startTime || !endTime) {
+    errors.push({ field: "startTime", message: "Los horarios de inicio y fin son obligatorios." });
+    return { valid: false, errors };
+  }
   if (startTime >= endTime) {
     errors.push({ field: "endTime", message: "La hora de fin debe ser posterior al inicio." });
     return { valid: false, errors };
   }
 
-  // Check overlaps
-  let schedules: DoctorSchedule[];
-  if (FIREBASE_CONFIGURED && db) {
-    const q = query(
-      collection(db, COL),
-      where("doctorId", "==", doctorId),
-      where("dayOfWeek", "==", dayOfWeek),
-      where("active", "==", true)
-    );
-    const snap = await getDocs(q);
-    schedules = snap.docs
-      .filter((d) => d.id !== excludeId)
-      .map((d) => toSchedule(d.id, d.data()));
-  } else {
-    schedules = lsLoad().filter(
-      (s) => s.doctorId === doctorId && s.dayOfWeek === dayOfWeek && s.active && s.id !== excludeId
-    );
-  }
+  requireDb("validarHorario");
+  // Fetch and filter client-side to avoid composite index
+  const snap = await getDocs(query(collection(db!, COL), where("doctorId", "==", doctorId)));
+  const existing = snap.docs
+    .filter(d => d.id !== excludeId && d.data().dayOfWeek === dayOfWeek && d.data().active !== false)
+    .map(d => toSchedule(d.id, d.data()));
 
-  const overlap = schedules.some(
-    (s) => startTime < s.endTime && endTime > s.startTime
-  );
-
+  const overlap = existing.some(s => startTime < (s.endTime ?? "") && endTime > (s.startTime ?? ""));
   if (overlap) {
-    errors.push({
-      field: "startTime",
-      message: `El horario se superpone con otro bloque existente para el ${DAY_NAMES[dayOfWeek]}.`,
-    });
+    errors.push({ field: "startTime", message: `Se superpone con un horario existente el ${DAY_NAMES[dayOfWeek]}.` });
   }
-
   return { valid: errors.length === 0, errors };
 }
 
-/** Persiste un nuevo bloque de horario para un profesional. */
 export async function registrarHorario(
-  doctorId: string,
-  dayOfWeek: number,
-  startTime: string,
-  endTime: string
+  doctorId: string, dayOfWeek: number, startTime: string, endTime: string
 ): Promise<DoctorSchedule> {
-  if (FIREBASE_CONFIGURED && db) {
-    const payload = {
-      doctorId,
-      dayOfWeek,
-      startTime,
-      endTime,
-      active: true,
-      createdAt: serverTimestamp(),
-    };
-    const ref = await addDoc(collection(db, COL), payload);
-    return { id: ref.id, doctorId, dayOfWeek, startTime, endTime, active: true, createdAt: new Date() };
-  }
-
-  const schedules = lsLoad();
-  const newSchedule: DoctorSchedule = {
-    id: Date.now().toString(),
-    doctorId,
-    dayOfWeek,
-    startTime,
-    endTime,
-    active: true,
-    createdAt: new Date(),
-  };
-  lsSave([...schedules, newSchedule]);
-  return newSchedule;
+  requireDb("registrarHorario");
+  const payload = { doctorId, dayOfWeek, startTime, endTime, active: true, createdAt: serverTimestamp() };
+  const ref = await addDoc(collection(db!, COL), payload);
+  return { id: ref.id, doctorId, dayOfWeek, startTime, endTime, active: true, createdAt: new Date() };
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// CRUD
-// ─────────────────────────────────────────────────────────────────────────
-
+/** Soft-disable: mantiene el documento pero lo marca como inactivo. */
 export async function desactivarHorario(id: string): Promise<void> {
-  if (FIREBASE_CONFIGURED && db) {
-    await updateDoc(doc(db, COL, id), { active: false, updatedAt: serverTimestamp() });
-    return;
-  }
+  requireDb("desactivarHorario");
+  await updateDoc(doc(db!, COL, id), { active: false, updatedAt: serverTimestamp() });
+}
 
-  const schedules = lsLoad();
-  const idx = schedules.findIndex((s) => s.id === id);
-  if (idx !== -1) {
-    schedules[idx] = { ...schedules[idx], active: false, updatedAt: new Date() };
-    lsSave(schedules);
-  }
+/** Borrado definitivo del documento de Firestore. */
+export async function eliminarHorario(id: string): Promise<void> {
+  requireDb("eliminarHorario");
+  await deleteDoc(doc(db!, COL, id));
 }
 
 export async function traerHorariosPorDoctor(doctorId: string): Promise<DoctorSchedule[]> {
-  if (FIREBASE_CONFIGURED && db) {
-    const q = query(
-      collection(db, COL),
-      where("doctorId", "==", doctorId)
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => toSchedule(d.id, d.data()));
-  }
-
-  return lsLoad().filter((s) => s.doctorId === doctorId);
+  requireDb("traerHorariosPorDoctor");
+  const snap = await getDocs(query(collection(db!, COL), where("doctorId", "==", doctorId)));
+  return snap.docs.map(d => toSchedule(d.id, d.data()));
 }
 
 export async function traerTodosLosHorarios(): Promise<DoctorSchedule[]> {
-  if (FIREBASE_CONFIGURED && db) {
-    const snap = await getDocs(collection(db, COL));
-    return snap.docs.map((d) => toSchedule(d.id, d.data()));
-  }
-
-  return lsLoad();
+  requireDb("traerTodosLosHorarios");
+  const snap = await getDocs(collection(db!, COL));
+  return snap.docs.map(d => toSchedule(d.id, d.data()));
 }

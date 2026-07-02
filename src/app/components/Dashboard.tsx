@@ -29,12 +29,6 @@ import {
   Appointment,
   DashboardPreferences,
 } from "../types";
-import {
-  initialClients,
-  initialPets,
-  initialMedicalRecords,
-  initialAppointments,
-} from "../data/mockData";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
@@ -86,26 +80,10 @@ export default function Dashboard({
   const [preferencesOpen, setPreferencesOpen] = useState(false);
 
   useEffect(() => {
-    // Load via service layer (Firestore when configured, localStorage as fallback)
-    traerClientes().catch(() => {
-      const s = localStorage.getItem("veterinaria_clients");
-      return s ? JSON.parse(s) : initialClients;
-    }).then(setClients);
-
-    traerMascotas().catch(() => {
-      const s = localStorage.getItem("veterinaria_pets");
-      return s ? JSON.parse(s) : initialPets;
-    }).then(setPets);
-
-    traerTodosLosHistoriales().catch(() => {
-      const s = localStorage.getItem("veterinaria_medical_records");
-      return s ? JSON.parse(s) : initialMedicalRecords;
-    }).then(setMedicalRecords);
-
-    traerTurnos().catch(() => {
-      const s = localStorage.getItem("veterinaria_appointments");
-      return s ? JSON.parse(s) : initialAppointments;
-    }).then(setAppointments);
+    traerClientes().then(setClients).catch(() => setClients([]));
+    traerMascotas().then(setPets).catch(() => setPets([]));
+    traerTodosLosHistoriales().then(setMedicalRecords).catch(() => setMedicalRecords([]));
+    traerTurnos().then(setAppointments).catch(() => setAppointments([]));
 
     const loadedPreferences = localStorage.getItem("veterinaria_dashboard_preferences");
     if (loadedPreferences) {
