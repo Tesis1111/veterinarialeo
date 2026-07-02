@@ -85,8 +85,23 @@ export default function AppointmentsModule() {
   useEffect(() => {
     // ── Real-time subscription to turnos via onSnapshot ────────────────
     if (FIREBASE_CONFIGURED && db) {
-      const q = query(collection(db, "turnos"), orderBy("date", "desc"));
+      // Sin orderBy para evitar requerir índice compuesto — ordenamos client-side
+      const q = query(collection(db, "turnos"));
       const unsub = onSnapshot(q, (snap) => {
+        const safeDate = (v: any): Date => {
+          if (!v) return new Date();
+          if (v instanceof Timestamp) return v.toDate();
+          if (v instanceof Date) return v;
+          const d = new Date(v);
+          return isNaN(d.getTime()) ? new Date() : d;
+        };
+        const safeOptDate = (v: any): Date | undefined => {
+          if (!v) return undefined;
+          if (v instanceof Timestamp) return v.toDate();
+          if (v instanceof Date) return v;
+          const d = new Date(v);
+          return isNaN(d.getTime()) ? undefined : d;
+        };
         const appts = snap.docs.map(d => {
           const data = d.data();
           return {
@@ -94,24 +109,26 @@ export default function AppointmentsModule() {
             clientId: data.clientId ?? data.clienteId ?? "",
             petId: data.petId ?? data.mascotaId ?? "",
             serviceId: data.serviceId ?? data.type ?? "clinic",
-            doctorId: data.doctorId,
-            date: data.date instanceof Timestamp ? data.date.toDate() : new Date(data.date ?? data.fecha),
+            doctorId: data.doctorId ?? null,
+            date: safeDate(data.date ?? data.fecha),
             startTime: data.startTime ?? data.hora ?? "",
             endTime: data.endTime ?? "",
             status: data.status ?? data.estado ?? "Confirmado",
-            reason: data.reason ?? data.notas ?? "",
+            reason: data.reason ?? "",
             notes: data.notes ?? data.notas ?? "",
             tiposEvento: data.tiposEvento ?? [],
             type: data.type ?? "clinic",
-            dateFrom: data.dateFrom ? new Date(data.dateFrom) : undefined,
-            dateTo: data.dateTo ? new Date(data.dateTo) : undefined,
-            createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(),
+            dateFrom: safeOptDate(data.dateFrom),
+            dateTo: safeOptDate(data.dateTo),
+            createdAt: safeDate(data.createdAt),
             createdBy: data.createdBy ?? "",
           } as any;
         });
+        // Sort client-side by date desc
+        appts.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
         setAppointments(appts);
-      }, () => {
-        // fallback if permission error
+      }, (err) => {
+        console.error("[AppointmentsModule] onSnapshot error:", err);
         const saved = localStorage.getItem("veterinaria_appointments");
         setAppointments(saved ? JSON.parse(saved) : initialAppointments);
       });
@@ -212,9 +229,12 @@ export default function AppointmentsModule() {
 
   // ── Modificadores del Calendario ────────────────────────────────
   const modifiers = useMemo(() => {
-    const daysWithAppts = appointments
-      .filter(apt => apt.status !== "cancelled")
-      .map(apt => new Date(apt.date));
+    const daysWithAppts = (appointments ?? [])
+      .filter(apt => apt.status !== "Cancelado" && apt.status !== "cancelled")
+      .map(apt => {
+        try { return new Date(apt.date); } catch { return null; }
+      })
+      .filter((d): d is Date => d instanceof Date && !isNaN(d.getTime()));
     return { hasAppointment: daysWithAppts };
   }, [appointments]);
 
@@ -224,9 +244,10 @@ export default function AppointmentsModule() {
 
   // ── Appointments filtrados ──────────────────────────────────────
   const appointmentsForDate = useMemo(() => {
-    return appointments
+    return (appointments ?? [])
       .filter(apt => {
-        if (apt.status === "cancelled") return false;
+        if (!apt || !apt.date) return false;
+        if (apt.status === "Cancelado" || apt.status === "cancelled") return false;
         if (apt.type === "clinic" || apt.type === "grooming") {
           return isSameDay(new Date(apt.date), selectedDate);
         }
@@ -243,10 +264,13 @@ export default function AppointmentsModule() {
 
   const upcomingAppointments = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
-    return appointments
+    return (appointments ?? [])
       .filter(apt => {
-        const aptDate = new Date(apt.date); aptDate.setHours(0, 0, 0, 0);
-        return aptDate >= today && apt.status !== "cancelled" && apt.status !== "completed";
+        if (!apt || !apt.date) return false;
+        try {
+          const aptDate = new Date(apt.date); aptDate.setHours(0, 0, 0, 0);
+          return aptDate >= today && apt.status !== "Cancelado" && apt.status !== "cancelled" && apt.status !== "Completado" && apt.status !== "completed";
+        } catch { return false; }
       })
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
       .slice(0, 12);
@@ -524,7 +548,7 @@ export default function AppointmentsModule() {
                 ["Fecha", "Hora", "Tipo", "Mascota", "Cliente", "Profesional", "Estado", "Motivo"],
                 upcomingAppointments.map(apt => [
                   format(new Date(apt.date), "dd/MM/yyyy"),
-                  apt.startTime || (apt.type === "daycare" ? `${format(new Date(apt.dateFrom!), "dd/MM")} - ${format(new Date(apt.dateTo!), "dd/MM")}` : "—"),
+                  apt.startTime || (apt.type === "daycare" && apt.dateFrom && apt.dateTo ? `${format(new Date(apt.dateFrom), "dd/MM")} - ${format(new Date(apt.dateTo), "dd/MM")}` : "—"),
                   getTypeLabel(apt.type),
                   getPetName(apt.petId),
                   getClientName(apt.clientId),

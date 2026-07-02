@@ -95,16 +95,27 @@ function lsSave(doctors: DoctorPerfil[]) {
 
 export async function traerDoctores(): Promise<DoctorPerfil[]> {
   if (FIREBASE_CONFIGURED && db) {
-    const snap = await getDocs(query(collection(db, COL), where("available", "==", true), orderBy("fullName")));
-    return snap.docs.map(d => toDoctor(d.id, d.data()));
+    try {
+      // Sin orderBy para evitar índice compuesto — filtramos/ordenamos client-side
+      const snap = await getDocs(query(collection(db, COL), where("available", "==", true)));
+      const data = snap.docs.map(d => toDoctor(d.id, d.data()));
+      return data.sort((a, b) => a.fullName.localeCompare(b.fullName, "es"));
+    } catch (err) {
+      console.error("[doctorService] traerDoctores error:", err);
+    }
   }
   return lsLoad().filter(d => d.available);
 }
 
 export async function traerTodosLosDoctores(): Promise<DoctorPerfil[]> {
   if (FIREBASE_CONFIGURED && db) {
-    const snap = await getDocs(query(collection(db, COL), orderBy("fullName")));
-    return snap.docs.map(d => toDoctor(d.id, d.data()));
+    try {
+      const snap = await getDocs(collection(db, COL));
+      const data = snap.docs.map(d => toDoctor(d.id, d.data()));
+      return data.sort((a, b) => a.fullName.localeCompare(b.fullName, "es"));
+    } catch (err) {
+      console.error("[doctorService] traerTodosLosDoctores error:", err);
+    }
   }
   return lsLoad();
 }

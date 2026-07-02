@@ -12,7 +12,8 @@ import {
 } from "../../services/historialService";
 import { traerClientes } from "../../services/clienteService";
 import { traerMascotas } from "../../services/mascotaService";
-import { suscribirTiposEvento, traerVacunasPorEspecie } from "../../services/parametrosService";
+import { suscribirTiposEvento, traerVacunasPorEspecie, suscribirEspecies, suscribirRazas } from "../../services/parametrosService";
+import { EspecieParametro, RazaParametro } from "../../types";
 import { traerDoctores } from "../../services/doctorService";
 import { TipoEvento, VacunaParametro, DoctorPerfil } from "../../types";
 import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
@@ -62,6 +63,8 @@ export default function MedicalHistoryModule() {
   const [records, setRecords] = useState<MedicalRecord[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [pets, setPets] = useState<Pet[]>([]);
+  const [especies, setEspecies] = useState<EspecieParametro[]>([]);
+  const [razas, setRazas] = useState<RazaParametro[]>([]);
   const [selectedClientId, setSelectedClientId] = useState("");
   const [selectedPetId, setSelectedPetId] = useState("");
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
@@ -101,11 +104,8 @@ export default function MedicalHistoryModule() {
   useEffect(() => {
     // ── Real-time subscription to historiales ────────────────────────
     if (FIREBASE_CONFIGURED && db) {
-      const q = query(
-        collection(db, "historiales"),
-        where("deleted", "==", false),
-        orderBy("date", "desc")
-      );
+      // Sin orderBy para evitar requerir índice compuesto — ordenamos client-side
+      const q = query(collection(db, "historiales"), where("deleted", "==", false));
       const unsub = onSnapshot(q, (snap) => {
         const recs = snap.docs.map(d => {
           const data = d.data();
@@ -133,16 +133,30 @@ export default function MedicalHistoryModule() {
             createdBy: data.createdBy ?? data.creadoPor ?? "",
           } as any;
         });
+        // Sort client-side by date desc (no Firestore index required)
+        recs.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
         setRecords(recs);
-      }, () => {
+      }, (err) => {
+        console.error("[MedicalHistory] onSnapshot historiales error:", err);
         const saved = localStorage.getItem("veterinaria_medical_records");
         setRecords(saved ? JSON.parse(saved) : initialMedicalRecords);
       });
-      traerClientes().then(setClients).catch(() => setClients(initialClients));
-      traerMascotas().then(setPets).catch(() => setPets(initialPets));
+      // Real-time clientes y mascotas para que los selects siempre estén actualizados
+      const unsubClients = onSnapshot(
+        query(collection(db, "clientes"), where("deleted", "==", false)),
+        (snap) => setClients(snap.docs.map(d => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt instanceof Timestamp ? d.data().createdAt.toDate() : new Date() } as any))),
+        () => traerClientes().then(setClients).catch(() => setClients(initialClients))
+      );
+      const unsubPets = onSnapshot(
+        query(collection(db, "mascotas"), where("deleted", "==", false)),
+        (snap) => setPets(snap.docs.map(d => ({ id: d.id, ...d.data(), deceased: d.data().deceased ?? false } as any))),
+        () => traerMascotas().then(setPets).catch(() => setPets(initialPets))
+      );
       suscribirTiposEvento(setTiposEvento);
+      suscribirEspecies(setEspecies);
+      suscribirRazas(setRazas);
       traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
-      return () => unsub();
+      return () => { unsub(); unsubClients(); unsubPets(); };
     } else {
       traerTodosLosHistoriales().then(setRecords).catch(() => {
         const saved = localStorage.getItem("veterinaria_medical_records");
@@ -157,6 +171,8 @@ export default function MedicalHistoryModule() {
         setPets(saved ? JSON.parse(saved) : initialPets);
       });
       suscribirTiposEvento(setTiposEvento);
+      suscribirEspecies(setEspecies);
+      suscribirRazas(setRazas);
       traerDoctores().then(setDoctoresPerfil).catch(() => setDoctoresPerfil([]));
     }
   }, []);
@@ -192,6 +208,21 @@ export default function MedicalHistoryModule() {
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [records, selectedPetId]);
 
+  // Auto-reload vaccines when selected pet changes and a vaccination event is active
+  useEffect(() => {
+    if (selectedPetId && addForm.eventType) {
+      const isVaccine = effectiveTipos.find(t => t.value === addForm.eventType)?.requiresVaccineTracking;
+      if (isVaccine) {
+        const pet = pets.find(p => p.id === selectedPetId) as any;
+        const especieId = resolveEspecieId(pet);
+        if (especieId) {
+          traerVacunasPorEspecie(especieId).then(setVacunasEspecie).catch(() => setVacunasEspecie([]));
+        }
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPetId, pets, razas, especies]);
+
   // ── Dynamic type helpers ──────────────────────────────────────
   const effectiveTipos = tiposEvento.length > 0
     ? tiposEvento.map(t => ({ value: t.name, label: t.name, color: t.color, requiresVaccineTracking: t.requiresVaccineTracking ?? false }))
@@ -203,6 +234,25 @@ export default function MedicalHistoryModule() {
   const isVaccinationEvent = (eventType: string) =>
     effectiveTipos.find(e => e.value === eventType)?.requiresVaccineTracking ?? false;
 
+  // Resolves the especieId for a pet using multiple strategies
+  const resolveEspecieId = (pet: any): string => {
+    // Strategy 1: direct especieId field
+    if (pet?.especieId) return pet.especieId;
+    // Strategy 2: breedId → lookup in razas to get especieId
+    if (pet?.breedId) {
+      const raza = razas.find(r => r.id === pet.breedId);
+      if (raza?.especieId) return raza.especieId;
+    }
+    // Strategy 3: species name string → match against especies
+    if (pet?.species) {
+      const especie = especies.find(e => e.name.toLowerCase() === pet.species.toLowerCase());
+      if (especie?.id) return especie.id;
+    }
+    // Strategy 4: speciesId legacy field
+    if (pet?.speciesId) return pet.speciesId;
+    return "";
+  };
+
   // Load vaccines when pet species changes and eventType is a vaccination
   const handleEventTypeChange = async (value: string) => {
     setAddForm(p => ({ ...p, eventType: value }));
@@ -211,9 +261,12 @@ export default function MedicalHistoryModule() {
     const isVaccine = effectiveTipos.find(t => t.value === value)?.requiresVaccineTracking;
     if (isVaccine && selectedPetId) {
       const pet = pets.find(p => p.id === selectedPetId) as any;
-      const especieId = pet?.speciesId ?? pet?.breedId?.split("_")[0] ?? "";
+      const especieId = resolveEspecieId(pet);
       if (especieId) {
         traerVacunasPorEspecie(especieId).then(setVacunasEspecie).catch(() => setVacunasEspecie([]));
+      } else {
+        // No species found — load all vaccines as fallback
+        import("../../services/parametrosService").then(m => m.traerTodasLasVacunas()).then(setVacunasEspecie).catch(() => setVacunasEspecie([]));
       }
     }
   };

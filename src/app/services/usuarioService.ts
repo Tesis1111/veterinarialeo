@@ -26,8 +26,14 @@ import {
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
-import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
-import { auth, db, FIREBASE_CONFIGURED } from "../firebase/config";
+import {
+  createUserWithEmailAndPassword,
+  updateProfile,
+  getAuth,
+  signOut as fbSignOut,
+} from "firebase/auth";
+import { initializeApp, deleteApp } from "firebase/app";
+import { auth, db, app, FIREBASE_CONFIGURED } from "../firebase/config";
 import { User, UserFormData, PermissionName, FormValidationResult } from "../types";
 
 // Import from AuthContext to avoid redefining the same map in multiple places.
@@ -123,41 +129,57 @@ export async function registrarUsuario(
     throw new Error("La contraseña es obligatoria para crear un usuario.");
   }
 
-  // 1. Crear en Firebase Auth
-  const cred = await createUserWithEmailAndPassword(auth!, data.email, data.password);
+  // ── SOLUCIÓN AL AUTH SWAP ────────────────────────────────────────────────
+  // createUserWithEmailAndPassword() desloguea al admin actual y loguea al nuevo usuario.
+  // Para evitarlo, usamos una app Firebase SECUNDARIA con el mismo config.
+  // La app secundaria crea al usuario en Auth sin afectar la sesión principal.
+  // ────────────────────────────────────────────────────────────────────────
+  const secondaryAppName = `secondary_create_user_${Date.now()}`;
+  const secondaryApp = initializeApp(app!.options, secondaryAppName);
+  const secondaryAuth = getAuth(secondaryApp);
+
+  let newUid: string;
 
   try {
-    // 2. Actualizar display name en Auth
+    // 1. Crear cuenta en Auth usando la app secundaria
+    const cred = await createUserWithEmailAndPassword(secondaryAuth, data.email, data.password);
+    newUid = cred.user.uid;
+    // Actualizar displayName en Auth secundario
     await updateProfile(cred.user, { displayName: data.fullName });
+    // Cerrar sesión del secundario (no afecta al admin principal)
+    await fbSignOut(secondaryAuth);
+  } finally {
+    // Siempre limpiar la app secundaria para evitar memory leaks
+    await deleteApp(secondaryApp).catch(() => {});
+  }
 
-    // 3. Crear documento en Firestore
-    const { password: _pw, ...safeData } = data as any; // no guardar contraseña
-    const permissions: PermissionName[] = ROLE_PERMISSIONS[data.roleId] ?? [];
+  // 3. Crear documento en Firestore con el UID obtenido
+  const { password: _pw, ...safeData } = data as any;
+  const permissions: PermissionName[] = ROLE_PERMISSIONS[data.roleId] ?? [];
 
-    const firestoreDoc: Record<string, unknown> = {
-      ...safeData,
-      uid: cred.user.uid,
-      // roleName MUST be lowercase to match AuthContext role checks
-      roleName: data.roleId.toLowerCase(),
-      roleId: data.roleId.toLowerCase(),
-      permissions,
-      active: data.active ?? true,
-      createdBy,
-      createdAt: serverTimestamp(),
-      // Extra profile fields
-      nombre: safeData.nombre || data.fullName.split(" ")[0],
-      apellido: safeData.apellido || data.fullName.split(" ").slice(1).join(" "),
-      ...(safeData.sexo && { sexo: safeData.sexo }),
-      ...(safeData.domicilio && { domicilio: safeData.domicilio }),
-    };
+  const firestoreDoc: Record<string, unknown> = {
+    ...safeData,
+    uid: newUid,
+    // roleName MUST be lowercase to match AuthContext role checks
+    roleName: data.roleId.toLowerCase(),
+    roleId: data.roleId.toLowerCase(),
+    permissions,
+    active: data.active ?? true,
+    createdBy,
+    createdAt: serverTimestamp(),
+    nombre: safeData.nombre || data.fullName.split(" ")[0],
+    apellido: safeData.apellido || data.fullName.split(" ").slice(1).join(" "),
+    ...(safeData.sexo && { sexo: safeData.sexo }),
+    ...(safeData.domicilio && { domicilio: safeData.domicilio }),
+  };
 
-    await setDoc(doc(db!, COL, cred.user.uid), firestoreDoc);
-
-    return toUser(cred.user.uid, { ...firestoreDoc, createdAt: new Date() });
+  try {
+    await setDoc(doc(db!, COL, newUid), firestoreDoc);
+    return toUser(newUid, { ...firestoreDoc, createdAt: new Date() });
   } catch (err) {
-    // Revertir: eliminar la cuenta de Auth para evitar cuentas huérfanas
-    await cred.user.delete().catch(() => { /* ignore cleanup error */ });
-    throw err;
+    // El usuario ya existe en Auth — no podemos eliminarlo fácilmente desde client-side
+    // pero al menos lanzamos el error con contexto claro
+    throw new Error(`Usuario creado en Auth (uid: ${newUid}) pero falló el guardado en Firestore: ${(err as Error).message}`);
   }
 }
 
