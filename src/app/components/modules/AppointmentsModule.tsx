@@ -884,10 +884,15 @@ export default function AppointmentsModule() {
                       <Select value={formData.doctorId} onValueChange={(v) => setFormData(prev => ({ ...prev, doctorId: v }))}>
                         <SelectTrigger><SelectValue placeholder="Seleccione profesional" /></SelectTrigger>
                         <SelectContent>
-                          {(doctoresPerfil.length > 0 ? doctoresPerfil : doctors.filter(d => d.available)).map(d => (
+                          {doctoresPerfil.length === 0 ? (
+                            <div className="px-3 py-4 text-sm text-gray-500 text-center">
+                              No hay profesionales registrados.
+                              <br />
+                              <span className="text-xs">Registre uno desde Seguridad.</span>
+                            </div>
+                          ) : doctoresPerfil.map(d => (
                             <SelectItem key={d.id} value={d.id}>
-                              {(d as any).fullName ?? (d as any).name}
-                              {(d as any).specialty ? ` — ${(d as any).specialty}` : ""}
+                              {d.fullName}{d.specialty ? ` — ${d.specialty}` : ""}
                             </SelectItem>
                           ))}
                         </SelectContent>

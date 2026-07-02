@@ -32,6 +32,7 @@ import {
   RazaParametro,
   TipoEvento,
   VacunaParametro,
+  ProfesionParametro,
 } from "../types";
 
 // ── Firestore ↔ model helpers ─────────────────────────────────────────────────
@@ -282,3 +283,71 @@ export async function modificarVacuna(id: string, data: Partial<VacunaParametro>
   await updateDoc(doc(db!, "arbolVacunacion", id), { ...data, updatedAt: serverTimestamp() });
 }
 export async function eliminarVacuna(id: string): Promise<void> { return modificarVacuna(id, { active: false }); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROFESIONES — nueva categoría paramétrica
+// ─────────────────────────────────────────────────────────────────────────────
+
+function toProfesion(id: string, d: any): ProfesionParametro {
+  return {
+    id,
+    name: d.name ?? "",
+    description: d.description,
+    active: d.active !== false,
+    createdAt: ts2date(d.createdAt),
+    updatedAt: d.updatedAt ? ts2date(d.updatedAt) : undefined,
+    createdBy: d.createdBy,
+  };
+}
+
+export function suscribirProfesiones(
+  callback: (items: ProfesionParametro[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe | (() => void) {
+  if (FIREBASE_CONFIGURED && db) {
+    const q = query(collection(db, "profesiones"), where("active", "==", true));
+    return onSnapshot(q, (snap) => {
+      const data = snap.docs.map(d => toProfesion(d.id, d.data()));
+      data.sort((a, b) => a.name.localeCompare(b.name, "es"));
+      callback(data);
+    }, (err) => {
+      console.error("[parametrosService] onSnapshot profesiones error:", err);
+      onError?.(err as Error);
+      callback([]);
+    });
+  }
+  callback([]);
+  return () => {};
+}
+
+export async function traerProfesiones(): Promise<ProfesionParametro[]> {
+  if (!db) return [];
+  try {
+    const snap = await getDocs(query(collection(db, "profesiones"), where("active", "==", true)));
+    return snap.docs.map(d => toProfesion(d.id, d.data()))
+      .sort((a, b) => a.name.localeCompare(b.name, "es"));
+  } catch (err) {
+    console.error("[parametrosService] traerProfesiones error:", err);
+    return [];
+  }
+}
+
+export async function registrarProfesion(
+  data: Omit<ProfesionParametro, "id" | "createdAt">,
+  createdBy: string
+): Promise<ProfesionParametro> {
+  requireDb("registrarProfesion");
+  const payload = { ...data, description: data.description ?? "", createdBy, active: true, createdAt: serverTimestamp() };
+  const ref = await addDoc(collection(db!, "profesiones"), payload);
+  return { id: ref.id, ...data, active: true, createdAt: new Date(), createdBy };
+}
+
+export async function modificarProfesion(id: string, data: Partial<ProfesionParametro>): Promise<void> {
+  requireDb("modificarProfesion");
+  await updateDoc(doc(db!, "profesiones", id), { ...data, updatedAt: serverTimestamp() });
+}
+
+export async function eliminarProfesion(id: string): Promise<void> {
+  return modificarProfesion(id, { active: false });
+}
+

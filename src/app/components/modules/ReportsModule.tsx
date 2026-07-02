@@ -48,6 +48,7 @@ export default function ReportsModule() {
   const [pets, setPets] = useState<any[]>([]);
   const [medicalRecords, setMedicalRecords] = useState<any[]>([]);
   const [appointments, setAppointments] = useState<any[]>([]);
+  const [doctors, setDoctors] = useState<any[]>([]);
   const [dateFrom, setDateFrom] = useState<Date>(startOfMonth(subMonths(new Date(), 2)));
   const [dateTo, setDateTo] = useState<Date>(endOfMonth(new Date()));
   const [selectedPeriod, setSelectedPeriod] = useState<string>("3months");
@@ -60,6 +61,10 @@ export default function ReportsModule() {
     import("../../services/mascotaService").then(m => m.traerMascotas()).then(setPets).catch(() => setPets([]));
     import("../../services/historialService").then(m => m.traerTodosLosHistoriales()).then(setMedicalRecords).catch(() => setMedicalRecords([]));
     import("../../services/turnoService").then(m => m.traerTurnos()).then(setAppointments).catch(() => setAppointments([]));
+    import("../../services/doctorService").then(m => m.traerTodosLosDoctores()).then(docs => {
+      // Normalize shape: doctors may have `name` (legacy) or `fullName` (new DoctorPerfil)
+      setDoctors(docs.map(d => ({ id: d.id, name: (d as any).fullName ?? (d as any).name ?? "", specialty: d.specialty ?? "", available: d.available })));
+    }).catch(() => setDoctors([]));
   }, []);
 
   const filteredRecords = useMemo(() => {

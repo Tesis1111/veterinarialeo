@@ -744,6 +744,16 @@ export interface DoctorPerfil {
   createdBy?: string;
 }
 
+export interface ProfesionParametro {
+  id: string;
+  name: string;
+  description?: string;
+  active: boolean;
+  createdAt: Date;
+  updatedAt?: Date;
+  createdBy?: string;
+}
+
 // ============================================
 // EXPORTACIONES DE COMPATIBILIDAD
 // ============================================

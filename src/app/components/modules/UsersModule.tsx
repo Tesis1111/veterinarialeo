@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
-import { User, Doctor, DoctorSchedule, DoctorPerfil } from "../../types";
+import { User, Doctor, DoctorSchedule, DoctorPerfil, ProfesionParametro } from "../../types";
+import { suscribirProfesiones } from "../../services/parametrosService";
 import {
   traerUsuarios,
   registrarUsuario,
@@ -131,6 +132,7 @@ export default function UsersModule() {
   // ── Estado usuarios ──────────────────────────────────────
   const [users, setUsers] = useState<User[]>([]);
   const [doctoresFirestore, setDoctoresFirestore] = useState<DoctorPerfil[]>([]);
+  const [profesiones, setProfesiones] = useState<ProfesionParametro[]>([]);
 
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -167,18 +169,15 @@ export default function UsersModule() {
 
   // ── Carga inicial ──────────────────────────────────────
   useEffect(() => {
-    traerUsuarios().then(setUsers).catch(() => {});
-    traerTodosLosHorarios().then(setSchedules).catch(() => {
-      
-    });
-    // Load doctors from Firestore (fallback to localStorage)
+    traerUsuarios().then(setUsers).catch(() => setUsers([]));
+    traerTodosLosHorarios().then(setSchedules).catch(() => setSchedules([]));
     traerTodosLosDoctores().then(d => {
       setDoctoresFirestore(d);
-      // Keep legacy doctors state synced for schedule management
       setDoctors(d.map(dp => ({ id: dp.id, userId: dp.userId ?? "", name: dp.fullName, specialty: dp.specialty, available: dp.available, createdAt: dp.createdAt })) as any);
-    }).catch(() => {
-      
-    });
+    }).catch(() => setDoctoresFirestore([]));
+    // Real-time profesiones — se actualiza cuando el admin agrega una nueva desde Parámetros
+    const unsubProf = suscribirProfesiones(setProfesiones);
+    return () => { unsubProf(); };
   }, []);
 
   if (!isAdmin) {
@@ -622,13 +621,29 @@ export default function UsersModule() {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-2">
-                      <Label htmlFor="specialty">Especialidad / Profesión</Label>
-                      <Input
-                        id="specialty"
+                      <Label htmlFor="specialty">
+                        Profesión / Especialidad <span className="text-red-500">*</span>
+                      </Label>
+                      <Select
                         value={formData.specialty}
-                        onChange={(e) => setFormData(p => ({ ...p, specialty: e.target.value }))}
-                        placeholder={formData.role === "veterinario" ? "Ej: Medicina General, Cirugía..." : "Ej: Peluquería Canina"}
-                      />
+                        onValueChange={(v) => setFormData(p => ({ ...p, specialty: v }))}
+                      >
+                        <SelectTrigger id="specialty">
+                          <SelectValue placeholder={profesiones.length === 0 ? "No hay profesiones configuradas" : "Seleccione profesión"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {profesiones.length === 0 ? (
+                            <div className="px-3 py-4 text-sm text-gray-500 text-center">
+                              No hay profesiones cargadas.
+                              <br />
+                              <span className="text-xs">Un admin debe agregarlas desde Parámetros → Profesiones.</span>
+                            </div>
+                          ) : profesiones.map(p => (
+                            <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-gray-400">Las profesiones se administran desde Parámetros.</p>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="licenseNumber">Número de Matrícula (opcional)</Label>

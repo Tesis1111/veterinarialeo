@@ -182,9 +182,9 @@ export default function MedicalHistoryModule() {
   const getPetSpecies = (petId: string) =>
     (pets.find(p => p.id === petId) as any)?.species || "";
   const getDoctorName = (doctorId: string) =>
-    doctors.find(d => d.id === doctorId)?.name || "Desconocido";
+    doctoresPerfil.find(d => d.id === doctorId)?.fullName || "Desconocido";
   const getDoctorSpecialty = (doctorId: string) =>
-    doctors.find(d => d.id === doctorId)?.specialty || "";
+    doctoresPerfil.find(d => d.id === doctorId)?.specialty || "";
   const getPetsByClient = (clientId: string) =>
     pets.filter(pet => pet.clientId === clientId);
 
@@ -967,11 +967,17 @@ export default function MedicalHistoryModule() {
                       <div className="space-y-2">
                         <Label>Profesional Responsable <span className="text-red-500">*</span></Label>
                         <Select value={addForm.professionalId} onValueChange={(v) => setAddForm(p => ({ ...p, professionalId: v }))}>
-                          <SelectTrigger><SelectValue placeholder="Seleccione profesional" /></SelectTrigger>
+                          <SelectTrigger><SelectValue placeholder={doctoresPerfil.length === 0 ? "No hay profesionales registrados" : "Seleccione profesional"} /></SelectTrigger>
                           <SelectContent>
-                            {(doctoresPerfil.length > 0 ? doctoresPerfil : doctors).map(d => (
+                            {doctoresPerfil.length === 0 ? (
+                              <div className="px-3 py-4 text-sm text-gray-500 text-center">
+                                No hay profesionales registrados.
+                                <br />
+                                <span className="text-xs">Registre un profesional desde Seguridad primero.</span>
+                              </div>
+                            ) : doctoresPerfil.map(d => (
                               <SelectItem key={d.id} value={d.id}>
-                                {(d as any).fullName ?? (d as any).name} — {(d as any).specialty}
+                                {d.fullName}{d.specialty ? ` — ${d.specialty}` : ""}
                               </SelectItem>
                             ))}
                           </SelectContent>

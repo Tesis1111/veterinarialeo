@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
-import { EspecieParametro, RazaParametro, TipoEvento, VacunaParametro } from "../../types";
+import { EspecieParametro, RazaParametro, TipoEvento, VacunaParametro, ProfesionParametro } from "../../types";
 import {
   suscribirEspecies, registrarEspecie, modificarEspecie, eliminarEspecie,
   suscribirRazas, registrarRaza, modificarRaza, eliminarRaza,
   suscribirTiposEvento, registrarTipoEvento, modificarTipoEvento, eliminarTipoEvento,
   suscribirVacunas, registrarVacuna, modificarVacuna, eliminarVacuna,
+  suscribirProfesiones, registrarProfesion, modificarProfesion, eliminarProfesion,
 } from "../../services/parametrosService";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -19,7 +20,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import {
   Settings2, Plus, Edit, Trash2, Save, X, ChevronDown, ChevronRight,
-  PawPrint, Stethoscope, Syringe, Shield,
+  PawPrint, Stethoscope, Syringe, Shield, UserCog,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -64,6 +65,13 @@ export default function ParametrosModule() {
   const [tipoDialogOpen, setTipoDialogOpen] = useState(false);
   const [deleteTipoId, setDeleteTipoId] = useState<string | null>(null);
 
+  // ── Profesiones state ───────────────────────────────────────────────────────
+  const [profesiones, setProfesiones] = useState<ProfesionParametro[]>([]);
+  const [profesionForm, setProfesionForm] = useState({ name: "", description: "" });
+  const [editingProfesion, setEditingProfesion] = useState<ProfesionParametro | null>(null);
+  const [profesionDialogOpen, setProfesionDialogOpen] = useState(false);
+  const [deleteProfesionId, setDeleteProfesionId] = useState<string | null>(null);
+
   // ── Árbol de Vacunación state ───────────────────────────────────────────────
   const [vacunas, setVacunas] = useState<VacunaParametro[]>([]);
   const [vacunaForm, setVacunaForm] = useState({ especieId: "", nombreVacuna: "", dosis: 1, periodicidadDias: 365, descripcion: "" });
@@ -80,11 +88,13 @@ export default function ParametrosModule() {
     const unsubRazas    = suscribirRazas(setRazas);
     const unsubTipos    = suscribirTiposEvento(setTiposEvento);
     const unsubVacunas  = suscribirVacunas(setVacunas);
+    const unsubProfesiones = suscribirProfesiones(setProfesiones);
     return () => {
       unsubEspecies();
       unsubRazas();
       unsubTipos();
       unsubVacunas();
+      unsubProfesiones();
     };
   }, []);
 
@@ -274,6 +284,39 @@ export default function ParametrosModule() {
 
   const filteredVacunas = vacunaEspecieFilter === "all" ? vacunas : vacunas.filter(v => v.especieId === vacunaEspecieFilter);
 
+  // ── PROFESIONES — handlers ──────────────────────────────────────────────────
+  const openNewProfesion = () => {
+    setEditingProfesion(null);
+    setProfesionForm({ name: "", description: "" });
+    setProfesionDialogOpen(true);
+  };
+  const openEditProfesion = (p: ProfesionParametro) => {
+    setEditingProfesion(p);
+    setProfesionForm({ name: p.name, description: p.description ?? "" });
+    setProfesionDialogOpen(true);
+  };
+  const handleSaveProfesion = async () => {
+    if (!profesionForm.name.trim()) { toast.error("El nombre de la profesión es obligatorio"); return; }
+    try {
+      if (editingProfesion) {
+        await modificarProfesion(editingProfesion.id, { name: profesionForm.name.trim(), description: profesionForm.description ?? "" });
+        toast.success("Profesión actualizada");
+      } else {
+        await registrarProfesion({ name: profesionForm.name.trim(), description: profesionForm.description ?? "", active: true }, user!.id);
+        toast.success("Profesión creada");
+      }
+      setProfesionDialogOpen(false);
+    } catch { toast.error("Error al guardar la profesión"); }
+  };
+  const handleDeleteProfesion = async () => {
+    if (!deleteProfesionId) return;
+    try {
+      await eliminarProfesion(deleteProfesionId);
+      toast.success("Profesión eliminada");
+    } catch { toast.error("Error al eliminar la profesión"); }
+    setDeleteProfesionId(null);
+  };
+
   // ─────────────────────────────────────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────────
@@ -290,7 +333,7 @@ export default function ParametrosModule() {
       </div>
 
       <Tabs defaultValue="especies">
-        <TabsList className="grid w-full grid-cols-3 bg-orange-50">
+        <TabsList className="grid w-full grid-cols-4 bg-orange-50">
           <TabsTrigger value="especies" className="flex items-center gap-1.5">
             <PawPrint className="h-4 w-4" /> Especies y Razas
           </TabsTrigger>
@@ -299,6 +342,9 @@ export default function ParametrosModule() {
           </TabsTrigger>
           <TabsTrigger value="vacunas" className="flex items-center gap-1.5">
             <Syringe className="h-4 w-4" /> Árbol de Vacunación
+          </TabsTrigger>
+          <TabsTrigger value="profesiones" className="flex items-center gap-1.5">
+            <UserCog className="h-4 w-4" /> Profesiones
           </TabsTrigger>
         </TabsList>
 
@@ -512,6 +558,49 @@ export default function ParametrosModule() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* ── TAB 4: Profesiones ─────────────────────────────────────────────── */}
+        <TabsContent value="profesiones" className="space-y-4 mt-4">
+          <Card className="border-orange-200 shadow-md">
+            <CardHeader className="bg-gradient-to-r from-orange-50 to-white">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-orange-800 flex items-center gap-2">
+                    <UserCog className="h-5 w-5" /> Profesiones
+                  </CardTitle>
+                  <CardDescription>Profesiones disponibles al registrar profesionales</CardDescription>
+                </div>
+                <Button onClick={openNewProfesion} className="bg-orange-600 hover:bg-orange-700" size="sm">
+                  <Plus className="h-4 w-4 mr-1" /> Nueva Profesión
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-4">
+              {profesiones.length === 0 ? (
+                <p className="text-center text-gray-400 py-8">No hay profesiones configuradas. Agregue una desde el botón "Nueva Profesión".</p>
+              ) : (
+                <div className="space-y-2">
+                  {profesiones.map(p => (
+                    <div key={p.id} className="flex items-center justify-between p-3 border border-gray-100 rounded-lg hover:bg-gray-50">
+                      <div>
+                        <p className="font-medium text-gray-800">{p.name}</p>
+                        {p.description && <p className="text-xs text-gray-500 mt-0.5">{p.description}</p>}
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => openEditProfesion(p)} className="p-1.5 text-gray-400 hover:text-orange-600 rounded">
+                          <Edit className="h-4 w-4" />
+                        </button>
+                        <button onClick={() => setDeleteProfesionId(p.id)} className="p-1.5 text-gray-400 hover:text-red-500 rounded">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       {/* ── DIALOGS ─────────────────────────────────────────────────────────── */}
@@ -714,6 +803,43 @@ export default function ParametrosModule() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteVacuna} className="bg-red-600 hover:bg-red-700">Eliminar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Profesión dialog */}
+      <Dialog open={profesionDialogOpen} onOpenChange={setProfesionDialogOpen}>
+        <DialogContent className="sm:max-w-md border-orange-200">
+          <DialogHeader>
+            <DialogTitle className="text-orange-800">{editingProfesion ? "Editar Profesión" : "Nueva Profesión"}</DialogTitle>
+            <DialogDescription>Complete los datos de la profesión.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="space-y-2">
+              <Label>Nombre <span className="text-red-500">*</span></Label>
+              <Input value={profesionForm.name} onChange={e => setProfesionForm(p => ({ ...p, name: e.target.value }))} placeholder="Ej: Veterinario, Peluquero, Auxiliar Clínico..." />
+            </div>
+            <div className="space-y-2">
+              <Label>Descripción (opcional)</Label>
+              <Textarea value={profesionForm.description} onChange={e => setProfesionForm(p => ({ ...p, description: e.target.value }))} placeholder="Detalles de la profesión..." rows={2} className="resize-none" />
+            </div>
+            <div className="flex gap-3 pt-2">
+              <Button onClick={handleSaveProfesion} className="flex-1 bg-orange-600 hover:bg-orange-700"><Save className="h-4 w-4 mr-2" />Guardar</Button>
+              <Button onClick={() => setProfesionDialogOpen(false)} variant="outline" className="flex-1"><X className="h-4 w-4 mr-2" />Cancelar</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!deleteProfesionId} onOpenChange={() => setDeleteProfesionId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar profesión?</AlertDialogTitle>
+            <AlertDialogDescription>Esta profesión será desactivada. Los usuarios existentes que la tengan asignada no se verán afectados.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteProfesion} className="bg-red-600 hover:bg-red-700">Eliminar</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

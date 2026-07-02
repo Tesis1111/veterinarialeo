@@ -129,6 +129,14 @@ service cloud.firestore {
       allow write:  if isAdmin();
     }
 
+    // ── /profesiones ──────────────────────────────────────
+    // All authenticated users read (needed for user creation combo)
+    // Only admin writes
+    match /profesiones/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin();
+    }
+
     // ── /doctores ─────────────────────────────────────────
     // All authenticated users read (needed to populate selects)
     // Admin: full R/W; veterinarios/peluqueros can update their own profile
