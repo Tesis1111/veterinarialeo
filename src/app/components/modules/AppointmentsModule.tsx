@@ -15,7 +15,7 @@ import { suscribirTiposEvento } from "../../services/parametrosService";
 import { traerDoctores } from "../../services/doctorService";
 import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
 import {
-  collection, addDoc, updateDoc, doc, onSnapshot, serverTimestamp, Timestamp, query, orderBy,
+  collection, addDoc, updateDoc, doc, onSnapshot, serverTimestamp, Timestamp, query, orderBy, where ,
 } from "firebase/firestore";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
