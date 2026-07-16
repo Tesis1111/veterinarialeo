@@ -1,0 +1,9 @@
+# VetCare - Sistema de Gestión Veterinaria
+# Este es un sistema privado de gestión, no debe ser indexado por motores de búsqueda
+
+User-agent: *
+Disallow: /
+
+# Permitir solo el manifest para PWA
+Allow: /manifest.json
+Allow: /icons/

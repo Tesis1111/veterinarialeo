@@ -1,0 +1,155 @@
+rules_version = '2';
+
+// ============================================================
+// Veterinaria Leo — Firestore Security Rules (RBAC)
+// ============================================================
+// Roles stored in /usuarios/{uid}.roleName:
+//   admin        — full read/write on all collections
+//   veterinario  — write on historiales; read on clients/pets/turnos/horarios
+//   recepcionista — write on clientes/mascotas/turnos; read on historiales/horarios
+//   (Any authenticated user can read their own /usuarios doc)
+// ============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ──────────────────────────────────
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getRole() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.roleName;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && getRole() == 'admin';
+    }
+
+    function isVeterinario() {
+      return isAuthenticated() && getRole() == 'veterinario';
+    }
+
+    function isRecepcionista() {
+      return isAuthenticated() && getRole() == 'recepcionista';
+    }
+
+    function isPeluquero() {
+      return isAuthenticated() && getRole() == 'peluquero';
+    }
+
+    // ── /usuarios ─────────────────────────────────────────
+    // Admins can read/write all user docs.
+    // Any authenticated user can read/update their own doc.
+    match /usuarios/{userId} {
+      allow read:   if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
+      allow create: if isAdmin();
+      allow update: if isAdmin() || request.auth.uid == userId;
+      allow delete: if isAdmin();
+    }
+
+    // ── /clientes ─────────────────────────────────────────
+    // Admin + recepcionista: full R/W
+    // Veterinario: read-only
+    // Peluquero: read-only
+    match /clientes/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin() || isRecepcionista();
+    }
+
+    // ── /mascotas ─────────────────────────────────────────
+    // Admin + recepcionista: full R/W
+    // Veterinario: read-only
+    // Peluquero: read-only
+    match /mascotas/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin() || isRecepcionista();
+    }
+
+    // ── /historiales ──────────────────────────────────────
+    // Admin + veterinario: full R/W
+    // Recepcionista + peluquero: read-only
+    match /historiales/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin() || isVeterinario();
+    }
+
+    // ── /turnos ───────────────────────────────────────────
+    // Admin + recepcionista + veterinario + peluquero: R/W
+    // (All authenticated staff can manage appointments)
+    match /turnos/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAuthenticated();
+    }
+
+    // ── /horarios ─────────────────────────────────────────
+    // Admin: full R/W
+    // All other roles: read-only (they need to see schedules)
+    match /horarios/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin();
+    }
+
+    // ── /auditoria ────────────────────────────────────────
+    // Admin: read-only (audit logs should not be modified)
+    // All writes must come from authenticated server-side operations
+    // For client-side writes (demo mode), allow only authenticated users to create
+    match /auditoria/{docId} {
+      allow read:   if isAdmin();
+      allow create: if isAuthenticated();
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // ── /especies ─────────────────────────────────────────
+    // All authenticated users read; only admin writes
+    match /especies/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin();
+    }
+
+    // ── /razas ────────────────────────────────────────────
+    // All authenticated users read; only admin writes
+    match /razas/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin();
+    }
+
+    // ── /tiposEvento ──────────────────────────────────────
+    // All authenticated users read; only admin writes
+    match /tiposEvento/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin();
+    }
+
+    // ── /arbolVacunacion ──────────────────────────────────
+    // All authenticated users read; only admin writes
+    match /arbolVacunacion/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin();
+    }
+
+    // ── /profesiones ──────────────────────────────────────
+    // All authenticated users read (needed for user creation combo)
+    // Only admin writes
+    match /profesiones/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin();
+    }
+
+    // ── /doctores ─────────────────────────────────────────
+    // All authenticated users read (needed to populate selects)
+    // Admin: full R/W; veterinarios/peluqueros can update their own profile
+    match /doctores/{docId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAdmin();
+      allow update: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // ── Deny everything else ──────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
