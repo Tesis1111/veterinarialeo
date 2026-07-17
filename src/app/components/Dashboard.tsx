@@ -101,8 +101,8 @@ export default function Dashboard({
         () => traerTodosLosHistoriales().then(setMedicalRecords).catch(() => setMedicalRecords([]))
       );
       const unsubAppts = onSnapshot(
-        query(collection(db, "turnos"), where("deleted", "==", false)),
-        (snap) => setAppointments(snap.docs.map(d => {
+        query(collection(db, "turnos")),
+        (snap) => setAppointments(snap.docs.filter(d => d.data().deleted !== true).map(d => {
           const data = d.data();
           const rawTs = data.date;
           const dateConverted = rawTs instanceof Timestamp ? rawTs.toDate() : new Date(data.date ?? data.fecha ?? Date.now());

@@ -10,6 +10,7 @@ import {
 } from "../../services/horarioService";
 import { traerDoctores } from "../../services/doctorService";
 import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
+import { useSuccessPopup } from "../../context/SuccessPopupContext";
 import { collection, onSnapshot, query, where, Timestamp } from "firebase/firestore";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
@@ -41,6 +42,7 @@ const timeOptions = [
 
 export default function BusinessHoursModule() {
   const { isAdmin } = useAuth();
+  const { showSuccess } = useSuccessPopup();
 
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [schedules, setSchedules] = useState<DoctorSchedule[]>([]);
@@ -138,7 +140,7 @@ export default function BusinessHoursModule() {
         scheduleForm.endTime
       );
       setSchedules(prev => [...prev, newSchedule]);
-      toast.success("Horario agregado exitosamente");
+      showSuccess("Horario agregado exitosamente");
       setScheduleForm({ dayOfWeek: 1, startTime: "09:00", endTime: "17:00", active: true });
     } catch {
       toast.error("Error al guardar el horario.");
@@ -151,7 +153,7 @@ export default function BusinessHoursModule() {
       await desactivarHorario(id).catch(() => {});
     }
     setSchedules(prev => prev.map(s => s.id === id ? { ...s, active: !s.active } : s));
-    toast.success("Estado del horario actualizado");
+    showSuccess("Estado del horario actualizado");
   };
 
   const handleDeleteSchedule = async () => {
@@ -159,7 +161,7 @@ export default function BusinessHoursModule() {
       try {
         await eliminarHorario(selectedSchedule.id);
         setSchedules(prev => prev.filter(s => s.id !== selectedSchedule.id));
-        toast.success("Horario eliminado");
+        showSuccess("Horario eliminado");
       } catch {
         toast.error("Error al eliminar el horario.");
       }

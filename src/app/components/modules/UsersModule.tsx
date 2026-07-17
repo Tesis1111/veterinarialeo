@@ -30,6 +30,7 @@ import {
   RotateCcw, Ban, ShieldAlert
 } from "lucide-react";
 import { toast } from "sonner";
+import { useSuccessPopup } from "../../context/SuccessPopupContext";
 
 // ══════════════════════════════════════════════
 // TIPOS Y CONSTANTES
@@ -84,6 +85,7 @@ const roleInfo: Record<RoleType, { displayName: string; color: string; descripti
 // ══════════════════════════════════════════════
 export default function UsersModule() {
   const { user: currentUser, isAdmin } = useAuth();
+  const { showSuccess } = useSuccessPopup();
 
   // ── Estado usuarios ──────────────────────────────────────
   const [users, setUsers] = useState<User[]>([]);
@@ -325,7 +327,7 @@ export default function UsersModule() {
         }
 
         setUsers(prev => prev.map(u => u.id === selectedUser.id ? updated : u));
-        toast.success("Usuario actualizado exitosamente");
+        showSuccess(`Usuario ${resolvedFullName} actualizado exitosamente.`);
       } else {
         if (!formData.password) { toast.error("La contraseña es obligatoria"); return; }
         if (formData.password.length < 6) { toast.error("La contraseña debe tener al menos 6 caracteres (requisito de Firebase)."); return; }
@@ -347,9 +349,9 @@ export default function UsersModule() {
         setUsers(prev => [...prev, newUser]);
 
         if (formData.profesion.trim()) {
-          toast.success(`Usuario "${resolvedFullName}" creado como profesional (${formData.profesion.trim()}).`);
+          showSuccess(`Usuario "${resolvedFullName}" creado como profesional (${formData.profesion.trim()}).`);
         } else {
-          toast.success(`Usuario "${resolvedFullName}" creado exitosamente.`);
+          showSuccess(`Usuario "${resolvedFullName}" creado exitosamente.`);
         }
         setLastCreated({ name: resolvedFullName, role: formData.role });
       }
@@ -380,7 +382,7 @@ export default function UsersModule() {
     if (u.id === currentUser?.id) { toast.error("No podés desactivar tu propia cuenta."); return; }
     try {
       await desactivarUsuario(u.id, currentUser?.id || "1");
-      toast.success(`Usuario ${u.fullName} dado de baja`);
+      showSuccess(`Usuario ${u.fullName} dado de baja`);
     } catch {
       toast.error("Error al dar de baja el usuario.");
     }
@@ -389,7 +391,7 @@ export default function UsersModule() {
   const handleReactivateUser = async (u: User) => {
     try {
       await reactivarUsuario(u.id, currentUser?.id || "1");
-      toast.success(`Usuario ${u.fullName} reactivado`);
+      showSuccess(`Usuario ${u.fullName} reactivado`);
     } catch {
       toast.error("Error al reactivar el usuario.");
     }
@@ -407,7 +409,7 @@ export default function UsersModule() {
       await eliminarUsuarioFisico(userToDelete.id);
       setUsers(prev => prev.filter(u => u.id !== userToDelete.id));
       setDoctoresFirestore(prev => prev.filter(d => d.userId !== userToDelete.id));
-      toast.success(`Usuario ${userToDelete.fullName} eliminado definitivamente`);
+      showSuccess(`Usuario ${userToDelete.fullName} eliminado definitivamente`);
     } catch {
       toast.error("Error al eliminar definitivamente el usuario.");
     }

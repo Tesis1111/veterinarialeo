@@ -34,10 +34,12 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
+import { useSuccessPopup } from "../../context/SuccessPopupContext";
 
 export default function PetsModuleEnhanced() {
   const { user } = useAuth();
   const { addLog } = useAudit();
+  const { showSuccess } = useSuccessPopup();
   const [pets, setPets] = useState<Pet[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -274,17 +276,21 @@ export default function PetsModuleEnhanced() {
     }
 
     try {
+      const petToSave: any = {
+        name: formData.name,
+        breedId: formData.breedId || formData.speciesId,
+        sex: formData.sex as Pet["sex"],
+        clientId: formData.clientId,
+        birthDate: formData.birthDate ? formData.birthDate.toISOString() : undefined,
+        color: formData.colorObservations,
+        observations: formData.colorObservations,
+        species: getSpeciesName(formData.speciesId),
+        race: getBreedName(formData.breedId),
+      };
+
       if (isEditing && selectedPet) {
         const previousClientId = selectedPet.clientId;
         const clientChanged = previousClientId !== formData.clientId;
-
-        const patchData: any = {
-          ...formData,
-          species: getSpeciesName(formData.speciesId),
-          race: getBreedName(formData.breedId),
-          observations: formData.colorObservations,
-          colorObservations: formData.colorObservations,
-        };
 
         if (clientChanged) {
           const ownershipChange: PetOwnershipChange = {
@@ -298,30 +304,15 @@ export default function PetsModuleEnhanced() {
             reason: "Actualización manual del dueño",
             recordedBy: user?.id || "1"
           };
-          patchData.ownershipHistory = [...(selectedPet.ownershipHistory || []), ownershipChange];
+          petToSave.ownershipHistory = [...(selectedPet.ownershipHistory || []), ownershipChange];
           addLog("Actualizar", "Mascotas", `Cambio de dueño: ${selectedPet.name} → ${getClientName(formData.clientId)}`);
         }
 
-        const updated = await modificarMascota(selectedPet.id, patchData, user?.id || "1");
-        setPets(prev => prev.map(p => p.id === selectedPet.id ? { ...p, ...updated } : p));
-        toast.success("Mascota actualizada exitosamente");
-        addLog("Actualizar", "Mascotas", `Mascota ${formData.name} actualizada`);
+        await modificarMascota(selectedPet.id, petToSave, user?.id || "1");
+        showSuccess(`Mascota ${petToSave.name} actualizada exitosamente.`);
       } else {
-        const petData: any = {
-          name: formData.name,
-          breedId: formData.breedId || formData.speciesId,
-          sex: formData.sex as Pet["sex"],
-          clientId: formData.clientId,
-          birthDate: formData.birthDate ? formData.birthDate.toISOString() : undefined,
-          color: formData.colorObservations,
-          observations: formData.colorObservations,
-          species: getSpeciesName(formData.speciesId),
-          race: getBreedName(formData.breedId),
-        };
-        const newPet = await registrarMascota(petData, user?.id || "1");
-        setPets(prev => [...prev, { ...newPet, ownershipHistory: [] } as any]);
-        toast.success("Mascota registrada exitosamente");
-        addLog("Crear", "Mascotas", `Mascota ${formData.name} registrada`);
+        await registrarMascota(petToSave, user?.id || "1");
+        showSuccess(`Mascota ${petToSave.name} registrada exitosamente.`);
       }
       handleCancel();
     } catch {
@@ -349,8 +340,8 @@ export default function PetsModuleEnhanced() {
     if (selectedPet) {
       try {
         await eliminarMascota(selectedPet.id, user?.id || "1");
+        showSuccess(`Mascota ${selectedPet.name} eliminada exitosamente.`);
         setPets(prev => prev.filter(p => p.id !== selectedPet.id));
-        toast.success("Mascota eliminada exitosamente");
         addLog("Eliminar", "Mascotas", `Mascota ${selectedPet.name} eliminada`);
         handleCancel();
       } catch {
@@ -363,7 +354,7 @@ export default function PetsModuleEnhanced() {
   const handleReactivatePet = async (pet: Pet) => {
     try {
       await reactivarMascota(pet.id, user?.id || "1");
-      toast.success(`${pet.name} reactivada`);
+      showSuccess(`Mascota ${pet.name} reactivada exitosamente.`);
       addLog("Actualizar", "Mascotas", `Mascota ${pet.name} reactivada`);
     } catch {
       toast.error("Error al reactivar la mascota.");
@@ -374,8 +365,8 @@ export default function PetsModuleEnhanced() {
     if (!petToPurge) return;
     try {
       await eliminarMascotaFisica(petToPurge.id);
+      showSuccess(`Mascota ${petToPurge.name} eliminada del sistema exitosamente.`);
       setPets(prev => prev.filter(p => p.id !== petToPurge.id));
-      toast.success(`${petToPurge.name} eliminada definitivamente`);
       addLog("Eliminar", "Mascotas", `Mascota ${petToPurge.name} eliminada definitivamente`);
     } catch {
       toast.error("Error al eliminar definitivamente la mascota.");

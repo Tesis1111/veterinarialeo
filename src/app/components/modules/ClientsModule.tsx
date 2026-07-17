@@ -25,9 +25,11 @@ import { Search, UserPlus, Save, X, Trash2, Edit, Users, FileSpreadsheet, FileTe
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
+import { useSuccessPopup } from "../../context/SuccessPopupContext";
 
 export default function ClientsModule() {
   const { user } = useAuth();
+  const { showSuccess } = useSuccessPopup();
   const [clients, setClients] = useState<Client[]>([]);
   const [pets, setPets] = useState<Pet[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -126,12 +128,12 @@ export default function ClientsModule() {
       .sort((a, b) => a.fullName.localeCompare(b.fullName, "es"));
   }, [clients, searchTerm, statusFilter]);
 
-  const handleReactivate = async (client: Client) => {
+  const handleStatusChange = async (client: Client, newStatus: boolean) => {
     try {
-      await reactivarCliente(client.id, user?.id || "1");
-      toast.success(`Cliente ${client.fullName} reactivado`);
+      await modificarCliente(client.id, { deleted: newStatus });
+      showSuccess(`Cliente ${client.fullName} ${newStatus ? 'dado de baja' : 'reactivado'} exitosamente.`);
     } catch {
-      toast.error("Error al reactivar el cliente.");
+      toast.error("Error al actualizar estado del cliente.");
     }
   };
 
@@ -139,8 +141,8 @@ export default function ClientsModule() {
     if (!clientToPurge) return;
     try {
       await eliminarClienteFisico(clientToPurge.id);
+      showSuccess(`Cliente ${clientToPurge.fullName} eliminado del sistema exitosamente.`);
       setClients(prev => prev.filter(c => c.id !== clientToPurge.id));
-      toast.success(`Cliente ${clientToPurge.fullName} eliminado definitivamente`);
     } catch {
       toast.error("Error al eliminar definitivamente el cliente.");
     }
@@ -226,11 +228,11 @@ export default function ClientsModule() {
       if (isEditing && selectedClient) {
         const updated = await asociarCliente(selectedClient.id, formData, user?.id || "1");
         setClients(prev => prev.map(c => c.id === selectedClient.id ? updated : c));
-        toast.success("Cliente actualizado exitosamente");
+        showSuccess(`Cliente ${formData.fullName} actualizado exitosamente.`);
       } else {
         const newClient = await registrarCliente(formData, user?.id || "1");
         setClients(prev => [...prev, newClient]);
-        toast.success("Cliente registrado exitosamente");
+        showSuccess(`Cliente ${formData.fullName} registrado exitosamente.`);
       }
       handleCancel();
     } catch {
@@ -264,7 +266,7 @@ export default function ClientsModule() {
       try {
         await eliminarCliente(selectedClient.id, user?.id || "1");
         setClients(prev => prev.filter(client => client.id !== selectedClient.id));
-        toast.success("Cliente eliminado exitosamente");
+        showSuccess("Cliente eliminado exitosamente.");
         handleCancel();
       } catch {
         toast.error("Error al eliminar el cliente.");

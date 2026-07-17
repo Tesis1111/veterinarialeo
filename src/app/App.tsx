@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { AuditProvider } from "./context/AuditContext";
 import { UIPreferencesProvider } from "./context/UIPreferencesContext";
+import { SuccessPopupProvider } from "./context/SuccessPopupContext";
 import Login from "./components/Login";
 import Navigation from "./components/Navigation";
 import Dashboard from "./components/Dashboard";
@@ -158,7 +159,9 @@ export default function App() {
     <AuthProvider>
       <AuditProvider>
         <UIPreferencesProvider>
-          <AppContent />
+          <SuccessPopupProvider>
+            <AppContent />
+          </SuccessPopupProvider>
         </UIPreferencesProvider>
       </AuditProvider>
     </AuthProvider>

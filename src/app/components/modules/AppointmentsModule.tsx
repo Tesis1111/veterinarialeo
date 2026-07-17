@@ -37,10 +37,12 @@ import {
   validateAppointmentFields,
 } from "../../utils/appointmentValidations";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
+import { useSuccessPopup } from "../../context/SuccessPopupContext";
 
 export default function AppointmentsModule() {
   const { user, hasPermission } = useAuth();
   const { addLog } = useAudit();
+  const { showSuccess } = useSuccessPopup();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [pets, setPets] = useState<Pet[]>([]);
@@ -205,24 +207,12 @@ export default function AppointmentsModule() {
 
   const getTypeLabel = (type: string) => {
     const dynamicType = tiposServicio.find(t => t.id === type || t.name.toLowerCase() === type.toLowerCase());
-    if (dynamicType) return dynamicType.name;
-    switch (type) {
-      case "clinic": return "Clínica Veterinaria";
-      case "grooming": return "Peluquería Canina";
-      case "daycare": return "Guardería";
-      default: return type;
-    }
+    return dynamicType ? dynamicType.name : type;
   };
 
   const getTypeColor = (type: string) => {
     const dynamicType = tiposServicio.find(t => t.id === type || t.name.toLowerCase() === type.toLowerCase());
-    if (dynamicType && dynamicType.color) return dynamicType.color;
-    switch (type) {
-      case "clinic": return "bg-blue-100 text-blue-800";
-      case "grooming": return "bg-pink-100 text-pink-800";
-      case "daycare": return "bg-green-100 text-green-800";
-      default: return "bg-gray-100 text-gray-800";
-    }
+    return dynamicType?.color || "bg-gray-100 text-gray-800";
   };
 
   // ── Modificadores del Calendario ────────────────────────────────
@@ -246,10 +236,14 @@ export default function AppointmentsModule() {
       .filter(apt => {
         if (!apt || !apt.date) return false;
         if (apt.status === "Cancelado" || apt.status === "cancelled") return false;
-        if (apt.type !== "daycare") {
+        
+        const dynamicType = tiposServicio.find(t => t.id === apt.type || t.name.toLowerCase() === apt.type.toLowerCase());
+        const isDaycare = dynamicType ? dynamicType.name.toLowerCase().includes("guarder") : apt.type === "daycare";
+        
+        if (!isDaycare) {
           return isSameDay(new Date(apt.date), selectedDate);
         }
-        if (apt.type === "daycare" && apt.dateFrom && apt.dateTo) {
+        if (isDaycare && apt.dateFrom && apt.dateTo) {
           const from = new Date(apt.dateFrom); from.setHours(0, 0, 0, 0);
           const to = new Date(apt.dateTo); to.setHours(0, 0, 0, 0);
           const sel = new Date(selectedDate); sel.setHours(0, 0, 0, 0);
@@ -298,7 +292,7 @@ export default function AppointmentsModule() {
           updatedAt: serverTimestamp(),
           updatedBy: user?.id || "1",
         });
-        // onSnapshot updates the list automatically
+        showSuccess(`El estado del turno ha cambiado a ${getStatusLabel(newStatus)} ✓`);
       } else {
         await modificarTurno(appointmentId, { status: newStatus }, user?.id || "1");
         setAppointments(prev => prev.map(apt => apt.id === appointmentId ? { ...apt, status: newStatus } : apt));
@@ -411,20 +405,24 @@ export default function AppointmentsModule() {
       `${parseInt(start.split(':')[0])}:${(parseInt(start.split(':')[1]) + 30).toString().padStart(2, '0')}`;
 
     try {
+      const appointmentData = {
+        clientId: formData.clientId,
+        petId: formData.petId,
+        doctorId: formData.doctorId || null,
+        date: formData.date,
+        startTime: formData.startTime || null,
+        endTime: formData.startTime ? calcEndTime(formData.startTime) : null,
+        reason: formData.reason || null,
+        notes: formData.notes || null,
+        tiposEvento: formData.eventoTipoId ? formData.eventoTipoId.split(",").filter(Boolean) : [],
+        type: formData.type,
+      };
+
       if (isEditing && selectedAppointment) {
         // ── Update existing appointment ────────────────────────────────
         const updatePayload: Record<string, any> = {
-          clientId: formData.clientId,
-          petId: formData.petId,
-          doctorId: formData.doctorId || null,
-          date: formData.date,
-          startTime: formData.startTime || null,
-          endTime: formData.startTime ? calcEndTime(formData.startTime) : null,
+          ...appointmentData,
           status: selectedAppointment.status,
-          reason: formData.reason || null,
-          notes: formData.notes || null,
-          tiposEvento: formData.eventoTipoId ? formData.eventoTipoId.split(",").filter(Boolean) : [],
-          type: formData.type,
           updatedAt: FIREBASE_CONFIGURED ? serverTimestamp() : new Date(),
           updatedBy: user?.id || "1",
         };
@@ -435,31 +433,21 @@ export default function AppointmentsModule() {
         if (FIREBASE_CONFIGURED && db) {
           await updateDoc(doc(db, "turnos", selectedAppointment.id), updatePayload);
         } else {
-          await modificarTurno(selectedAppointment.id, formData as any, user?.id || "1");
-          setAppointments(prev => prev.map(apt => apt.id === selectedAppointment.id ? { ...apt, ...updatePayload } : apt));
+          await modificarTurno(selectedAppointment.id, appointmentData, user?.id || "1");
         }
-        toast.success("Turno actualizado exitosamente ✓");
+        showSuccess("Turno actualizado exitosamente ✓");
         addLog("Actualizar", "turnos", `Turno actualizado para ${getPetName(formData.petId)}`);
       } else {
         // ── Create new appointment — write directly to Firestore ────────
         const newPayload: Record<string, any> = {
-          clientId: formData.clientId,
-          clienteId: formData.clientId, // alias for compatibility
-          petId: formData.petId,
+          ...appointmentData,
+          clienteId: formData.clientId,
           mascotaId: formData.petId,
-          doctorId: formData.doctorId || null,
-          date: formData.date,
           fecha: formData.date,
-          startTime: formData.startTime || null,
           hora: formData.startTime || null,
-          endTime: formData.startTime ? calcEndTime(formData.startTime) : null,
           status: "Confirmado",
           estado: "Confirmado",
-          reason: formData.reason || null,
-          notes: formData.notes || null,
           notas: formData.notes || null,
-          tiposEvento: formData.eventoTipoId ? formData.eventoTipoId.split(",").filter(Boolean) : [],
-          type: formData.type,
           serviceId: formData.type,
           creadoEn: FIREBASE_CONFIGURED ? serverTimestamp() : new Date(),
           createdAt: FIREBASE_CONFIGURED ? serverTimestamp() : new Date(),
@@ -472,13 +460,10 @@ export default function AppointmentsModule() {
 
         if (FIREBASE_CONFIGURED && db) {
           await addDoc(collection(db, "turnos"), newPayload);
-          // onSnapshot will update the list automatically
         } else {
-          // localStorage fallback
-          const newApt = await registrarTurno(formData as any, user?.id || "1");
-          setAppointments(prev => [...prev, newApt]);
+          await registrarTurno({ ...appointmentData, status: "Confirmado", estado: "Confirmado" }, user?.id || "1");
         }
-        toast.success("Turno agendado y confirmado exitosamente ✓");
+        showSuccess("Turno agendado y confirmado exitosamente ✓");
         addLog("Crear", "turnos", `Turno creado para ${getPetName(formData.petId)} — ${getClientName(formData.clientId)}`);
       }
       handleCancel();
@@ -563,7 +548,11 @@ export default function AppointmentsModule() {
                 ["Fecha", "Hora", "Tipo", "Mascota", "Cliente", "Profesional", "Estado", "Motivo"],
                 upcomingAppointments.map(apt => [
                   format(new Date(apt.date), "dd/MM/yyyy"),
-                  apt.startTime || (apt.type === "daycare" && apt.dateFrom && apt.dateTo ? `${format(new Date(apt.dateFrom), "dd/MM")} - ${format(new Date(apt.dateTo), "dd/MM")}` : "—"),
+                  apt.startTime || ( (() => { 
+                    const dynType = tiposServicio.find(t => t.id === apt.type || t.name.toLowerCase() === apt.type.toLowerCase());
+                    const isGuard = dynType ? dynType.name.toLowerCase().includes("guarder") : apt.type === "daycare";
+                    return isGuard && apt.dateFrom && apt.dateTo ? `${format(new Date(apt.dateFrom), "dd/MM")} - ${format(new Date(apt.dateTo), "dd/MM")}` : "—";
+                  })() ),
                   getTypeLabel(apt.type),
                   getPetName(apt.petId),
                   getClientName(apt.clientId),
@@ -816,11 +805,10 @@ export default function AppointmentsModule() {
                             <SelectItem key={ts.id} value={ts.id as AppointmentType}>{ts.name}</SelectItem>
                           ))
                         ) : (
-                          <>
-                            <SelectItem value="clinic">Clínica Veterinaria</SelectItem>
-                            <SelectItem value="grooming">Peluquería Canina</SelectItem>
-                            <SelectItem value="daycare">Guardería</SelectItem>
-                          </>
+                          <div className="p-3 text-sm text-gray-500 text-center">
+                            No hay servicios configurados.
+                            <br/>Configure en Parámetros.
+                          </div>
                         )}
                       </SelectContent>
                     </Select>
@@ -854,7 +842,11 @@ export default function AppointmentsModule() {
                 </div>
 
                 {/* Motivo / Tipos de Evento (multi-selección) */}
-                {formData.type !== "daycare" && tiposEvento.length > 0 && (
+                {(() => {
+                  const dynType = tiposServicio.find(t => t.id === formData.type || t.name.toLowerCase() === formData.type.toLowerCase());
+                  const isGuard = dynType ? dynType.name.toLowerCase().includes("guarder") : formData.type === "daycare";
+                  return !isGuard;
+                })() && tiposEvento.length > 0 && (
                   <div className="space-y-2">
                     <Label>Motivo / Tipos de Consulta <span className="text-xs text-gray-400 font-normal">(puede seleccionar varios)</span></Label>
                     <div className="flex flex-wrap gap-2 p-3 border border-gray-200 rounded-lg bg-gray-50/50 min-h-[42px]">
@@ -889,7 +881,11 @@ export default function AppointmentsModule() {
                 )}
 
                 {/* Campos de fecha/hora según tipo */}
-                {(formData.type !== "daycare") ? (
+                {(() => {
+                  const dynType = tiposServicio.find(t => t.id === formData.type || t.name.toLowerCase() === formData.type.toLowerCase());
+                  const isGuard = dynType ? dynType.name.toLowerCase().includes("guarder") : formData.type === "daycare";
+                  return !isGuard;
+                })() ? (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <Label>Fecha <span className="text-red-500">*</span></Label>

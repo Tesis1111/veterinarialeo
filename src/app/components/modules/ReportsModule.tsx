@@ -23,6 +23,7 @@ import { es } from "date-fns/locale";
 import { toast } from "sonner";
 import { exportToPDF, exportToExcel } from "../../utils/exportUtils";
 import CustomReportBuilder from "./CustomReportBuilder";
+import { suscribirRazas, suscribirTiposServicio } from "../../services/parametrosService";
 
 const COLORS = [
   "#f97316","#fb923c","#fdba74","#fed7aa",
@@ -51,6 +52,8 @@ export default function ReportsModule() {
   const [medicalRecords, setMedicalRecords] = useState<any[]>([]);
   const [appointments, setAppointments] = useState<any[]>([]);
   const [doctors, setDoctors] = useState<any[]>([]);
+  const [razas, setRazas] = useState<any[]>([]);
+  const [tiposServicio, setTiposServicio] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState<Date>(startOfMonth(subMonths(new Date(), 2)));
   const [dateTo, setDateTo] = useState<Date>(endOfMonth(new Date()));
@@ -137,7 +140,10 @@ export default function ReportsModule() {
       }).catch(() => {})
     );
 
-    return () => { unsubClients(); unsubPets(); unsubHistoriales(); unsubTurnos(); unsubDoctores(); };
+    const unsubRazas = suscribirRazas(setRazas);
+    const unsubTiposServicio = suscribirTiposServicio(setTiposServicio);
+
+    return () => { unsubClients(); unsubPets(); unsubHistoriales(); unsubTurnos(); unsubDoctores(); unsubRazas(); unsubTiposServicio(); };
   }, []);
 
   // Listas según el alcance seleccionado. La resolución de nombres siempre usa
@@ -245,6 +251,42 @@ export default function ReportsModule() {
       .map(([species, count]) => ({ name: species, value: count, percentage: ((count / total) * 100).toFixed(1) }))
       .sort((a, b) => b.value - a.value);
   }, [scopedPets]);
+
+  const [selectedSpecies, setSelectedSpecies] = useState<string>("all");
+
+  const breedDistribution = useMemo(() => {
+    const breedMap = new Map<string, number>();
+    scopedPets.forEach(pet => {
+      if (selectedSpecies !== "all" && pet.species !== selectedSpecies) return;
+      const breedId = pet.breed || "Sin raza";
+      breedMap.set(breedId, (breedMap.get(breedId) || 0) + 1);
+    });
+    const total = Array.from(breedMap.values()).reduce((a, b) => a + b, 0) || 1;
+    return Array.from(breedMap.entries())
+      .map(([breedId, count]) => {
+        const razaObj = razas.find(r => r.id === breedId || r.name === breedId);
+        const name = razaObj ? razaObj.name : breedId;
+        return { name, value: count, percentage: ((count / total) * 100).toFixed(1) };
+      })
+      .sort((a, b) => b.value - a.value);
+  }, [scopedPets, razas, selectedSpecies]);
+
+  const recordsByServiceType = useMemo(() => {
+    const typeMap = new Map<string, number>();
+    appointments.filter(a => a.status !== "Cancelado" && a.status !== "cancelled" && isWithinInterval(new Date(a.date), { start: dateFrom, end: dateTo }))
+      .forEach(apt => {
+        const type = apt.type || "clinic";
+        typeMap.set(type, (typeMap.get(type) || 0) + 1);
+      });
+    const total = Array.from(typeMap.values()).reduce((a, b) => a + b, 0) || 1;
+    return Array.from(typeMap.entries())
+      .map(([typeId, count]) => {
+        const dynType = tiposServicio.find(t => t.id === typeId || t.name.toLowerCase() === typeId.toLowerCase());
+        const name = dynType ? dynType.name : (typeId === "clinic" ? "Clínica Veterinaria" : typeId === "grooming" ? "Peluquería Canina" : typeId === "daycare" ? "Guardería" : typeId);
+        return { name, value: count, percentage: ((count / total) * 100).toFixed(1) };
+      })
+      .sort((a, b) => b.value - a.value);
+  }, [appointments, tiposServicio, dateFrom, dateTo]);
 
   const stats = useMemo(() => {
     const activePets = scopedPets.filter(p => !p.deceased);
@@ -518,6 +560,9 @@ export default function ReportsModule() {
           <TabsTrigger value="events" className="text-xs sm:text-sm py-2">
             <BarChart3 className="h-3.5 w-3.5 mr-1.5 hidden sm:inline" />Eventos
           </TabsTrigger>
+          <TabsTrigger value="services" className="text-xs sm:text-sm py-2">
+            <CalendarIcon className="h-3.5 w-3.5 mr-1.5 hidden sm:inline" />Servicios
+          </TabsTrigger>
           <TabsTrigger value="clients" className="text-xs sm:text-sm py-2">
             <Users className="h-3.5 w-3.5 mr-1.5 hidden sm:inline" />Clientes
           </TabsTrigger>
@@ -652,6 +697,57 @@ export default function ReportsModule() {
               </CardContent>
             </Card>
           </div>
+
+          {/* ══ RAZAS (RAMIFICADO) ══════════════════════════════════════════ */}
+          <Card className="border-purple-200">
+            <CardHeader className="bg-gradient-to-r from-purple-50 to-white pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <CardTitle className="text-purple-800 flex items-center gap-2">
+                  <PawPrint className="h-5 w-5" />
+                  Distribución por Razas
+                </CardTitle>
+                <CardDescription>Desglose de razas por especie</CardDescription>
+              </div>
+              <div className="w-full sm:w-64">
+                <Select value={selectedSpecies} onValueChange={setSelectedSpecies}>
+                  <SelectTrigger className="border-purple-200 bg-white">
+                    <SelectValue placeholder="Todas las especies" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas las especies</SelectItem>
+                    {speciesDistribution.map(s => (
+                      <SelectItem key={s.name} value={s.name}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+               <ResponsiveContainer width="100%" height={280}>
+                 <BarChart data={breedDistribution} margin={{ bottom: 40 }} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#faf5ff" />
+                    <XAxis type="number" tick={{ fontSize: 11 }} />
+                    <YAxis dataKey="name" type="category" width={110} tick={{ fontSize: 11 }} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Bar dataKey="value" name="Mascotas" radius={[0, 4, 4, 0]}>
+                      {breedDistribution.map((_, idx) => (
+                        <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+               </ResponsiveContainer>
+               <div className="space-y-1.5 max-h-[280px] overflow-y-auto pr-2">
+                 {breedDistribution.map((item, index) => (
+                    <div key={index} className="flex items-center gap-2 p-2 hover:bg-purple-50 rounded-lg transition-colors">
+                      <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                      <span className="text-sm font-medium flex-1">{item.name}</span>
+                      <span className="text-sm text-gray-600">{item.value} mascotas</span>
+                      <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">{item.percentage}%</Badge>
+                    </div>
+                  ))}
+               </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* ══ PROFESIONALES ══════════════════════════════════════ */}
@@ -802,6 +898,67 @@ export default function ReportsModule() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        {/* ══ SERVICIOS ══════════════════════════════════════════ */}
+        <TabsContent value="services">
+          <Card className="border-orange-200">
+            <CardHeader className="bg-gradient-to-r from-orange-50 to-white pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-orange-800 flex items-center gap-2">
+                    <CalendarIcon className="h-5 w-5" />
+                    Distribución de Tipos de Servicio (Turnos)
+                  </CardTitle>
+                  <CardDescription>Servicios agendados en el período seleccionado</CardDescription>
+                </div>
+                <Button onClick={() => {
+                  exportToExcel("tipos_servicio", ["Servicio", "Cantidad", "Porcentaje"], recordsByServiceType.map(e => [e.name, e.value, `${e.percentage}%`]), "Distribución de Servicios");
+                  toast.success("Excel de servicios exportado");
+                }} size="sm" variant="outline" className="border-orange-300 text-orange-700 hover:bg-orange-50">
+                  <FileSpreadsheet className="mr-2 h-3.5 w-3.5" />Excel
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-4">
+              {recordsByServiceType.length === 0 ? (
+                <div className="text-center py-12 text-gray-400">Sin datos de turnos para el período</div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie data={recordsByServiceType} cx="50%" cy="50%" outerRadius={110}
+                        label={({ name, percentage }) => `${percentage}%`}
+                        labelLine dataKey="value">
+                        {recordsByServiceType.map((_, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(v: any) => [`${v} turnos`]} />
+                      <Legend formatter={(value) => value} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="space-y-3 max-h-64 overflow-y-auto pr-1 mt-4">
+                    {recordsByServiceType.map((event, index) => (
+                      <div key={index} className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                            <span className="text-sm font-medium">{event.name}</span>
+                          </div>
+                          <Badge variant="outline" className="text-xs">{event.value} ({event.percentage}%)</Badge>
+                        </div>
+                        <div className="w-full bg-gray-100 rounded-full h-2">
+                          <div className="h-2 rounded-full transition-all duration-500"
+                            style={{ width: `${event.percentage}%`, backgroundColor: COLORS[index % COLORS.length] }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* ══ CLIENTES ══════════════════════════════════════════ */}

@@ -30,15 +30,17 @@ import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Badge } from "../ui/badge";
 import {
-  FileText, Eye, Download, Calendar as CalendarIcon, Plus, Upload, X,
+  FileText, Activity, AlertTriangle, Calendar as CalendarIcon, Clock,
+  Save, Trash2, X, Plus, Search, ChevronRight, Stethoscope, FileSpreadsheet, RefreshCw,
   File, Image as ImageIcon, FileType, Thermometer, Scale,
-  Stethoscope, Pill, ClipboardList, AlertCircle, Mail, CheckSquare, Square, Send,
-  FileSpreadsheet, Archive, AlertTriangle, Syringe
+  Pill, ClipboardList, AlertCircle, Mail, CheckSquare, Square, Send,
+  Archive, Syringe
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
+import { useSuccessPopup } from "../../context/SuccessPopupContext";
 
 // Static fallback event types (used when Firebase is not configured)
 const CLINICAL_EVENT_TYPES_FALLBACK = [
@@ -59,6 +61,7 @@ const CLINICAL_EVENT_TYPES_FALLBACK = [
 export default function MedicalHistoryModule() {
   const { user, hasPermission } = useAuth();
   const { addLog } = useAudit();
+  const { showSuccess } = useSuccessPopup();
   const [records, setRecords] = useState<MedicalRecord[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [pets, setPets] = useState<Pet[]>([]);

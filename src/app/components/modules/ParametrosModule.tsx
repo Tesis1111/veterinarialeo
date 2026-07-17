@@ -24,6 +24,7 @@ import {
   PawPrint, Stethoscope, Syringe, Shield, UserCog, Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useSuccessPopup } from "../../context/SuccessPopupContext";
 
 // ── Color options for event types ─────────────────────────────────────────────
 const COLOR_OPTIONS = [
@@ -43,6 +44,7 @@ const COLOR_OPTIONS = [
 
 export default function ParametrosModule() {
   const { user, isAdmin } = useAuth();
+  const { showSuccess } = useSuccessPopup();
 
   // ── Especies state ──────────────────────────────────────────────────────────
   const [especies, setEspecies] = useState<EspecieParametro[]>([]);
@@ -144,10 +146,10 @@ export default function ParametrosModule() {
     try {
       if (editingEspecie) {
         await modificarEspecie(editingEspecie.id, { name: especieForm.name.trim(), icon: especieForm.icon || "🐾", description: especieForm.description || "" });
-        toast.success("Especie actualizada");
+        showSuccess("Especie actualizada");
       } else {
         await registrarEspecie({ name: especieForm.name.trim(), icon: especieForm.icon || "🐾", description: especieForm.description || "", active: true }, user!.id);
-        toast.success("Especie creada");
+        showSuccess("Especie creada");
       }
       // onSnapshot actualiza la lista automáticamente — no necesitamos setEspecies manual
       setEspecieDialogOpen(false);
@@ -164,7 +166,7 @@ export default function ParametrosModule() {
     }
     try {
       await eliminarEspecie(deleteEspecieId);
-      toast.success("Especie eliminada"); // onSnapshot actualiza la lista
+      showSuccess("Especie eliminada"); // onSnapshot actualiza la lista
     } catch { toast.error("Error al eliminar la especie"); }
     setDeleteEspecieId(null);
   };
@@ -190,10 +192,10 @@ export default function ParametrosModule() {
     try {
       if (editingRaza) {
         await modificarRaza(editingRaza.id, { name: razaForm.name.trim(), description: razaForm.description || "" });
-        toast.success("Raza actualizada");
+        showSuccess("Raza actualizada");
       } else {
         await registrarRaza({ name: razaForm.name.trim(), especieId: razaForm.especieId, description: razaForm.description || "", active: true }, user!.id);
-        toast.success("Raza creada");
+        showSuccess("Raza creada");
       }
       // onSnapshot actualiza la lista automáticamente
       setRazaDialogOpen(false);
@@ -204,7 +206,7 @@ export default function ParametrosModule() {
     if (!deleteRazaId) return;
     try {
       await eliminarRaza(deleteRazaId);
-      toast.success("Raza eliminada");
+      showSuccess("Raza eliminada");
     } catch { toast.error("Error al eliminar la raza"); }
     setDeleteRazaId(null);
   };
@@ -230,10 +232,10 @@ export default function ParametrosModule() {
     try {
       if (editingTipo) {
         await modificarTipoEvento(editingTipo.id, { name: tipoForm.name.trim(), color: tipoForm.color, requiresVaccineTracking: tipoForm.requiresVaccineTracking });
-        toast.success("Tipo de evento actualizado");
+        showSuccess("Tipo de evento actualizado");
       } else {
         await registrarTipoEvento({ name: tipoForm.name.trim(), color: tipoForm.color, requiresVaccineTracking: tipoForm.requiresVaccineTracking, active: true }, user!.id);
-        toast.success("Tipo de evento creado");
+        showSuccess("Tipo de evento creado");
       }
       // onSnapshot actualiza la lista automáticamente
       setTipoDialogOpen(false);
@@ -244,7 +246,7 @@ export default function ParametrosModule() {
     if (!deleteTipoId) return;
     try {
       await eliminarTipoEvento(deleteTipoId);
-      toast.success("Tipo de evento eliminado");
+      showSuccess("Tipo de evento eliminado");
     } catch { toast.error("Error al eliminar el tipo de evento"); }
     setDeleteTipoId(null);
   };
@@ -272,10 +274,10 @@ export default function ParametrosModule() {
     try {
       if (editingVacuna) {
         await modificarVacuna(editingVacuna.id, { ...vacunaForm, nombreVacuna: vacunaForm.nombreVacuna.trim(), especieName: especie?.name });
-        toast.success("Vacuna actualizada");
+        showSuccess("Vacuna actualizada");
       } else {
         await registrarVacuna({ ...vacunaForm, nombreVacuna: vacunaForm.nombreVacuna.trim(), especieName: especie?.name, active: true }, user!.id);
-        toast.success("Vacuna creada");
+        showSuccess("Vacuna creada");
       }
       // onSnapshot actualiza la lista automáticamente
       setVacunaDialogOpen(false);
@@ -286,7 +288,7 @@ export default function ParametrosModule() {
     if (!deleteVacunaId) return;
     try {
       await eliminarVacuna(deleteVacunaId);
-      toast.success("Vacuna eliminada");
+      showSuccess("Vacuna eliminada");
     } catch { toast.error("Error al eliminar la vacuna"); }
     setDeleteVacunaId(null);
   };
@@ -309,10 +311,10 @@ export default function ParametrosModule() {
     try {
       if (editingProfesion) {
         await modificarProfesion(editingProfesion.id, { name: profesionForm.name.trim(), description: profesionForm.description ?? "" });
-        toast.success("Profesión actualizada");
+        showSuccess("Profesión actualizada");
       } else {
         await registrarProfesion({ name: profesionForm.name.trim(), description: profesionForm.description ?? "", active: true }, user!.id);
-        toast.success("Profesión creada");
+        showSuccess("Profesión creada");
       }
       setProfesionDialogOpen(false);
     } catch { toast.error("Error al guardar la profesión"); }
@@ -321,7 +323,7 @@ export default function ParametrosModule() {
     if (!deleteProfesionId) return;
     try {
       await eliminarProfesion(deleteProfesionId);
-      toast.success("Profesión eliminada");
+      showSuccess("Profesión eliminada");
     } catch { toast.error("Error al eliminar la profesión"); }
     setDeleteProfesionId(null);
   };
@@ -342,10 +344,10 @@ export default function ParametrosModule() {
     try {
       if (editingServicio) {
         await modificarTipoServicio(editingServicio.id, { name: servicioForm.name.trim(), color: servicioForm.color, description: servicioForm.description ?? "" });
-        toast.success("Tipo de servicio actualizado");
+        showSuccess("Tipo de servicio actualizado");
       } else {
         await registrarTipoServicio({ name: servicioForm.name.trim(), color: servicioForm.color, description: servicioForm.description ?? "", active: true }, user!.id);
-        toast.success("Tipo de servicio creado");
+        showSuccess("Tipo de servicio creado");
       }
       setServicioDialogOpen(false);
     } catch { toast.error("Error al guardar el tipo de servicio"); }
@@ -354,7 +356,7 @@ export default function ParametrosModule() {
     if (!deleteServicioId) return;
     try {
       await eliminarTipoServicio(deleteServicioId);
-      toast.success("Tipo de servicio eliminado");
+      showSuccess("Tipo de servicio eliminado");
     } catch { toast.error("Error al eliminar el tipo de servicio"); }
     setDeleteServicioId(null);
   };
