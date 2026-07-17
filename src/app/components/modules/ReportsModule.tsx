@@ -258,7 +258,7 @@ export default function ReportsModule() {
     const breedMap = new Map<string, number>();
     scopedPets.forEach(pet => {
       if (selectedSpecies !== "all" && pet.species !== selectedSpecies) return;
-      const breedId = pet.breed || "Sin raza";
+      const breedId = pet.race || pet.breedId || "Sin raza";
       breedMap.set(breedId, (breedMap.get(breedId) || 0) + 1);
     });
     const total = Array.from(breedMap.values()).reduce((a, b) => a + b, 0) || 1;

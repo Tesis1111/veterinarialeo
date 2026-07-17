@@ -32,7 +32,7 @@ export const SuccessPopupProvider: React.FC<{ children: ReactNode }> = ({ childr
     <SuccessPopupContext.Provider value={{ showSuccess }}>
       {children}
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 transform animate-in zoom-in-95 duration-200 border border-gray-100 flex flex-col items-center text-center relative">
             <button 
               onClick={() => setIsOpen(false)}
@@ -41,7 +41,7 @@ export const SuccessPopupProvider: React.FC<{ children: ReactNode }> = ({ childr
               <X className="h-5 w-5" />
             </button>
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
-              <CheckCircle2 className="h-10 w-10 text-green-500 animate-bounce" />
+              <CheckCircle2 className="h-10 w-10 text-green-500" />
             </div>
             <h3 className="text-xl font-bold text-gray-900 mb-2">¡Éxito!</h3>
             <p className="text-gray-600 font-medium">
