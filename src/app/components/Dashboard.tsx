@@ -102,7 +102,12 @@ export default function Dashboard({
       );
       const unsubAppts = onSnapshot(
         query(collection(db, "turnos"), where("deleted", "==", false)),
-        (snap) => setAppointments(snap.docs.map(d => ({ id: d.id, ...d.data(), date: d.data().date instanceof Timestamp ? d.data().date.toDate() : new Date(d.data().date || d.data().fecha) } as any))),
+        (snap) => setAppointments(snap.docs.map(d => {
+          const data = d.data();
+          const rawTs = data.date;
+          const dateConverted = rawTs instanceof Timestamp ? rawTs.toDate() : new Date(data.date ?? data.fecha ?? Date.now());
+          return { id: d.id, ...data, date: dateConverted, _rawDate: rawTs } as any;
+        })),
         () => traerTurnos().then(setAppointments).catch(() => setAppointments([]))
       );
       const unsubTiposServicio = suscribirTiposServicio(setTiposServicio);
@@ -143,12 +148,21 @@ export default function Dashboard({
   today.setHours(0, 0, 0, 0);
 
   const todayAppointments = appointments.filter((apt) => {
-    const aptDate = new Date(apt.date);
+    // Handle both Date objects and Firestore Timestamps
+    const rawDate = (apt as any)._rawDate ?? apt.date;
+    let aptDate: Date;
+    if (rawDate && typeof rawDate === 'object' && typeof rawDate.toDate === 'function') {
+      aptDate = rawDate.toDate();
+    } else {
+      aptDate = new Date(rawDate ?? apt.date);
+    }
+    if (isNaN(aptDate.getTime())) return false;
+    aptDate = new Date(aptDate);
     aptDate.setHours(0, 0, 0, 0);
-    return (
-      aptDate.getTime() === today.getTime() &&
-      apt.status !== "cancelled"
-    );
+    // Handle all cancel status variants (Spanish/English)
+    const status = (apt.status ?? "").toLowerCase();
+    if (status === "cancelado" || status === "cancelled") return false;
+    return aptDate.getTime() === today.getTime();
   });
 
   const recentRecords = [...medicalRecords]

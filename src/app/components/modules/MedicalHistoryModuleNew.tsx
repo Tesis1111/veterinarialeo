@@ -711,7 +711,7 @@ export default function MedicalHistoryModule() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-2 bg-orange-50">
           <TabsTrigger value="consult">Consultar Historial</TabsTrigger>
-          <TabsTrigger value="add" disabled={!hasPermission("manage_medical_history") || isPetDeceased}>
+          <TabsTrigger value="add" disabled={isPetDeceased}>
             Agregar Registro
           </TabsTrigger>
         </TabsList>
@@ -937,6 +937,14 @@ export default function MedicalHistoryModule() {
                 <div className="text-center py-12 text-gray-500">
                   <Stethoscope className="h-16 w-16 mx-auto mb-4 text-gray-300" />
                   <p>Seleccione un cliente y mascota en la sección superior</p>
+                </div>
+              ) : !hasPermission("manage_medical_history") ? (
+                <div className="text-center py-12">
+                  <AlertCircle className="h-16 w-16 mx-auto mb-4 text-amber-400" />
+                  <p className="text-gray-600 font-medium">Sin permisos para agregar registros</p>
+                  <p className="text-sm text-gray-500 mt-2">
+                    Solo veterinarios y administradores pueden registrar eventos clínicos.
+                  </p>
                 </div>
               ) : isPetDeceased ? (
                 <div className="text-center py-12">
@@ -1391,20 +1399,52 @@ export default function MedicalHistoryModule() {
 
               {selectedRecord.attachments && selectedRecord.attachments.length > 0 && (
                 <div>
-                  <h4 className="text-sm font-semibold text-gray-700 mb-2">Archivos Adjuntos ({selectedRecord.attachments.length})</h4>
-                  <div className="space-y-2">
+                  <h4 className="text-sm font-semibold text-gray-700 mb-3">Archivos Adjuntos ({selectedRecord.attachments.length})</h4>
+                  <div className="space-y-3">
                     {selectedRecord.attachments.map(att => (
-                      <div key={att.id} className="flex items-center justify-between p-2 bg-gray-50 rounded border">
-                        <div className="flex items-center gap-2">
-                          {getFileIcon(att.fileType)}
-                          <div>
-                            <p className="text-sm">{att.fileName}</p>
-                            <p className="text-xs text-gray-400">{formatFileSize(att.fileSize)}</p>
+                      <div key={att.id} className="border rounded-lg overflow-hidden bg-gray-50">
+                        {/* Preview de imagen inline */}
+                        {att.fileType && att.fileType.startsWith('image/') && (
+                          <div className="w-full bg-black/5 flex items-center justify-center p-2">
+                            <img
+                              src={att.fileUrl}
+                              alt={att.fileName}
+                              className="max-h-64 max-w-full object-contain rounded"
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                            />
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between p-2">
+                          <div className="flex items-center gap-2">
+                            {getFileIcon(att.fileType)}
+                            <div>
+                              <p className="text-sm">{att.fileName}</p>
+                              <p className="text-xs text-gray-400">{formatFileSize(att.fileSize)}</p>
+                            </div>
+                          </div>
+                          <div className="flex gap-1">
+                            {att.fileType && att.fileType.startsWith('image/') && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => window.open(att.fileUrl, '_blank')}
+                                className="text-orange-600 hover:text-orange-700"
+                                title="Ver imagen"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => downloadFile(att)}
+                              className="text-blue-600 hover:text-blue-700"
+                              title="Descargar"
+                            >
+                              <Download className="h-4 w-4" />
+                            </Button>
                           </div>
                         </div>
-                        <Button size="sm" variant="ghost" onClick={() => downloadFile(att)} className="text-blue-600 hover:text-blue-700">
-                          <Download className="h-4 w-4" />
-                        </Button>
                       </div>
                     ))}
                   </div>
