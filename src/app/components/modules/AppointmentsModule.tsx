@@ -438,7 +438,7 @@ export default function AppointmentsModule() {
           await modificarTurno(selectedAppointment.id, formData as any, user?.id || "1");
           setAppointments(prev => prev.map(apt => apt.id === selectedAppointment.id ? { ...apt, ...updatePayload } : apt));
         }
-        toast.success("Turno actualizado exitosamente");
+        toast.success("Turno actualizado exitosamente ✓");
         addLog("Actualizar", "turnos", `Turno actualizado para ${getPetName(formData.petId)}`);
       } else {
         // ── Create new appointment — write directly to Firestore ────────
@@ -478,7 +478,7 @@ export default function AppointmentsModule() {
           const newApt = await registrarTurno(formData as any, user?.id || "1");
           setAppointments(prev => [...prev, newApt]);
         }
-        toast.success("✓ Turno agendado y confirmado");
+        toast.success("Turno agendado y confirmado exitosamente ✓");
         addLog("Crear", "turnos", `Turno creado para ${getPetName(formData.petId)} — ${getClientName(formData.clientId)}`);
       }
       handleCancel();
@@ -495,6 +495,7 @@ export default function AppointmentsModule() {
     setFormData({ type: "clinic", clientId: "", petId: "", doctorId: "", eventoTipoId: "", date: new Date(), startTime: "", endTime: "", dateFrom: undefined, dateTo: undefined, reason: "", notes: "" });
     setSelectedAppointment(null);
     setIsEditing(false);
+    setActiveTab("calendar");
   };
 
   const handleEdit = (apt: Appointment) => {
