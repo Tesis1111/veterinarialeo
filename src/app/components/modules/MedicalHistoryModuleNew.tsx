@@ -34,7 +34,7 @@ import {
   Save, Trash2, X, Plus, Search, ChevronRight, Stethoscope, FileSpreadsheet, RefreshCw,
   File, Image as ImageIcon, FileType, Thermometer, Scale,
   Pill, ClipboardList, AlertCircle, Mail, CheckSquare, Square, Send,
-  Archive, Syringe, Eye, Upload
+  Archive, Syringe, Eye, Upload, Download
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -43,7 +43,7 @@ import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
 import { useSuccessPopup } from "../../context/SuccessPopupContext";
 import { sendClinicalHistory, sendReminder } from "../../services/resendService";
 import jsPDF from "jspdf";
-import "jspdf-autotable";
+import autoTable from "jspdf-autotable";
 
 // Static fallback event types (used when Firebase is not configured)
 const CLINICAL_EVENT_TYPES_FALLBACK = [
@@ -575,7 +575,7 @@ export default function MedicalHistoryModule() {
       `${r.description}${(r as any).diagnosis ? ` | Dx: ${(r as any).diagnosis}` : ""}`
     ]);
 
-    (doc as any).autoTable({
+    autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
       startY: 30,
