@@ -39,12 +39,35 @@ service cloud.firestore {
     }
 
     // ── /usuarios ─────────────────────────────────────────
-    // Admins can read/write all user docs.
-    // Any authenticated user can read/update their own doc.
+    // Admins leen/escriben todos los docs de usuario.
+    // Cualquier usuario autenticado lee y edita su propio doc, pero SIN escalar
+    // privilegios.
+    //
+    // OWNER_EMAIL: email del dueño del sistema. DEBE coincidir con la constante
+    // OWNER_EMAIL de AuthContext.tsx (se usa para el bootstrap del primer admin).
     match /usuarios/{userId} {
       allow read:   if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
-      allow create: if isAdmin();
-      allow update: if isAdmin() || request.auth.uid == userId;
+
+      // Crear: solo un admin.
+      // BOOTSTRAP del primer admin: el dueño puede crear SU PROPIO doc como admin
+      // (su email lo verifica Firebase Auth, así ningún otro usuario puede hacerlo).
+      allow create: if isAdmin()
+                    || (
+                         request.auth.uid == userId
+                         && request.auth.token.email == 'mateob7505@gmail.com'
+                         && request.resource.data.roleName == 'admin'
+                       );
+
+      // Actualizar: el admin puede todo. El propio usuario puede editar su perfil
+      // (nombre, teléfono, etc.) pero NO puede escalar privilegios: roleName,
+      // roleId, permissions y active quedan bloqueados salvo que sea admin.
+      allow update: if isAdmin()
+                    || (
+                         request.auth.uid == userId
+                         && !request.resource.data.diff(resource.data).affectedKeys()
+                              .hasAny(['roleName', 'roleId', 'permissions', 'active'])
+                       );
+
       allow delete: if isAdmin();
     }
 
