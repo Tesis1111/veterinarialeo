@@ -450,7 +450,7 @@ export default function MedicalHistoryModule() {
           sendReminder(clientEmail, {
             clientName: currentOwner?.fullName || "Desconocido",
             petName: getPetName(selectedPetId),
-            reminderType: isVaccineEvent ? "Próxima Vacuna" : "Próximo Control",
+            reminderType: isVaccinationEvent(addForm.eventType) ? "Próxima Vacuna" : "Próximo Control",
             date: format(proximoRefuerzo, "dd/MM/yyyy"),
             notes: addForm.notes || "Recuerde agendar su turno a tiempo."
           }).catch(console.error);
