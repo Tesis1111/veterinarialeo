@@ -34,7 +34,7 @@ import {
   Save, Trash2, X, Plus, Search, ChevronRight, Stethoscope, FileSpreadsheet, RefreshCw,
   File, Image as ImageIcon, FileType, Thermometer, Scale,
   Pill, ClipboardList, AlertCircle, Mail, CheckSquare, Square, Send,
-  Archive, Syringe, Eye
+  Archive, Syringe, Eye, Upload
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
