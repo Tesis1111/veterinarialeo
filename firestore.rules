@@ -145,6 +145,13 @@ service cloud.firestore {
       allow write:  if isAdmin();
     }
 
+    // ── /tiposServicio ────────────────────────────────────
+    // All authenticated users read; only admin writes
+    match /tiposServicio/{docId} {
+      allow read:   if isAuthenticated();
+      allow write:  if isAdmin();
+    }
+
     // ── /arbolVacunacion ──────────────────────────────────
     // All authenticated users read; only admin writes
     match /arbolVacunacion/{docId} {
