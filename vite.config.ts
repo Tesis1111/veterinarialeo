@@ -35,6 +35,13 @@ export default defineConfig(({ mode }) => {
       },
     },
 
+    // Los estáticos (sw.js, manifest.json, robots.txt, íconos) viven en
+    // src/app/public, no en ./public (la ubicación por defecto de Vite).
+    // Sin esto, el build no los copia a dist/ y en producción /sw.js
+    // termina sirviendo index.html (SPA rewrite), rompiendo el registro
+    // del Service Worker con un error de MIME type.
+    publicDir: path.resolve(__dirname, 'src/app/public'),
+
     // ── Build optimizations for Vercel ────────────────────────────────
     build: {
       // Target modern browsers (Vercel edge network handles legacy clients)
