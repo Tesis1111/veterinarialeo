@@ -120,7 +120,10 @@ async function loadUserFromFirestore(fbUser: FirebaseUser): Promise<User | null>
       updatedAt: data.updatedAt?.toDate(),
       lastLogin: new Date(),
     };
-  } catch {
+  } catch (err) {
+    // DEBUG temporal: la UI muestra un mensaje genérico, pero acá queda visible
+    // la causa real (p. ej. permission-denied si las reglas no están publicadas).
+    console.error("[AuthContext] loadUserFromFirestore falló:", err);
     return null;
   }
 }
@@ -239,6 +242,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err: any) {
       // Firebase auth errors (wrong password, user not found, etc.) are
       // intentionally swallowed here — the UI shows a generic message.
+      // DEBUG temporal: dejamos visible el código/mensaje real en consola.
+      console.error("[AuthContext] login falló:", err?.code || err?.message || err);
       return false;
     }
   };
