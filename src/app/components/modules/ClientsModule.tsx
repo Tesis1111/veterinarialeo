@@ -26,6 +26,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
 import { useSuccessPopup } from "../../context/SuccessPopupContext";
+import { sendWelcomeEmail } from "../../services/resendService";
 
 export default function ClientsModule() {
   const { user } = useAuth();
@@ -233,6 +234,11 @@ export default function ClientsModule() {
         const newClient = await registrarCliente(formData, user?.id || "1");
         setClients(prev => [...prev, newClient]);
         showSuccess(`Cliente ${formData.fullName} registrado exitosamente.`);
+        
+        // Enviar email de bienvenida
+        if (formData.email) {
+          sendWelcomeEmail(formData.email, { clientName: formData.fullName }).catch(console.error);
+        }
       }
       handleCancel();
     } catch {

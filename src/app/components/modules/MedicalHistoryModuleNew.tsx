@@ -41,6 +41,9 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
 import { useSuccessPopup } from "../../context/SuccessPopupContext";
+import { sendClinicalHistory, sendReminder } from "../../services/resendService";
+import jsPDF from "jspdf";
+import "jspdf-autotable";
 
 // Static fallback event types (used when Firebase is not configured)
 const CLINICAL_EVENT_TYPES_FALLBACK = [
@@ -440,6 +443,20 @@ export default function MedicalHistoryModule() {
       addLog("Crear", "historiales", `Registro clínico agregado para ${getPetName(selectedPetId)}`);
       toast.success("Registro agregado al historial clínico");
 
+      // Enviar recordatorio si hay próximo refuerzo/turno
+      if (proximoRefuerzo) {
+        const clientEmail = (clients.find(c => c.id === selectedClientId) as any)?.email;
+        if (clientEmail) {
+          sendReminder(clientEmail, {
+            clientName: currentOwner?.fullName || "Desconocido",
+            petName: getPetName(selectedPetId),
+            reminderType: isVaccineEvent ? "Próxima Vacuna" : "Próximo Control",
+            date: format(proximoRefuerzo, "dd/MM/yyyy"),
+            notes: addForm.notes || "Recuerde agendar su turno a tiempo."
+          }).catch(console.error);
+        }
+      }
+
       if (sendEmail) {
         const clientEmail = getClientEmail(selectedClientId);
         const clientName = getClientName(selectedClientId);
@@ -537,6 +554,54 @@ export default function MedicalHistoryModule() {
     );
     addLog("Exportar", "Historial Clínico", `Historial PDF de ${getPetName(selectedPetId)} generado`);
     toast.success("PDF generado — use Ctrl+P para guardar");
+  };
+
+  const handleEmailPDF = () => {
+    if (petHistory.length === 0) { toast.error("No hay historial para exportar"); return; }
+    const petInfo = pets.find(p => p.id === selectedPetId);
+    
+    const doc = new jsPDF();
+    doc.text(`Historial Clínico - ${getPetName(selectedPetId)}`, 14, 15);
+    doc.setFontSize(10);
+    doc.text(`${(petInfo as any)?.species || ""} - ${(petInfo as any)?.race || ""}`, 14, 22);
+    
+    const tableColumn = ["Fecha", "Tipo", "Profesional", "Peso", "Temp.", "Detalle"];
+    const tableRows = petHistory.map(r => [
+      format(new Date(r.date), "dd/MM/yyyy"),
+      r.eventType,
+      getDoctorName(r.professionalId),
+      (r as any).weight ? `${(r as any).weight} kg` : "-",
+      (r as any).temperature ? `${(r as any).temperature}°C` : "-",
+      `${r.description}${(r as any).diagnosis ? ` | Dx: ${(r as any).diagnosis}` : ""}`
+    ]);
+
+    (doc as any).autoTable({
+      head: [tableColumn],
+      body: tableRows,
+      startY: 30,
+      theme: 'grid',
+      styles: { fontSize: 8 }
+    });
+
+    const pdfBase64 = doc.output('datauristring');
+    
+    // Send email
+    const client = clients.find(c => c.id === (petInfo as any)?.clientId || c.id === (petInfo as any)?.ownerId);
+    if (client?.email) {
+      toast.promise(
+        sendClinicalHistory(client.email, {
+          clientName: client.fullName,
+          petName: getPetName(selectedPetId)
+        }, pdfBase64),
+        {
+          loading: 'Enviando historial por correo...',
+          success: '¡Historial enviado exitosamente!',
+          error: 'Error al enviar el correo'
+        }
+      );
+    } else {
+      toast.error('El cliente no tiene un correo registrado.');
+    }
   };
 
   const handleExportIndividualPDF = (record: any) => {
@@ -744,6 +809,14 @@ export default function MedicalHistoryModule() {
                       Dar de baja
                     </Button>
                   )}
+                  <Button variant="outline" className="flex items-center gap-2 border-orange-200 text-orange-700 hover:bg-orange-50" onClick={handleExportPDF}>
+                  <FileText className="w-4 h-4" />
+                  Descargar PDF
+                </Button>
+                <Button variant="outline" className="flex items-center gap-2 border-blue-200 text-blue-700 hover:bg-blue-50" onClick={handleEmailPDF}>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-mail"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                  Enviar por Correo
+                </Button>
                   <Button
                     onClick={handleExportExcel}
                     disabled={!selectedPetId || petHistory.length === 0}

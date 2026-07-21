@@ -5,6 +5,8 @@ import { useAuth } from "../context/AuthContext";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { toast, Toaster } from "sonner";
+import { sendPasswordRecovery } from "../services/resendService";
 import {
   Card,
   CardContent,
@@ -30,7 +32,6 @@ import {
   CheckCircle,
   AlertTriangle,
 } from "lucide-react";
-import { toast } from "sonner";
 
 export default function Login() {
   const { login } = useAuth();
@@ -100,11 +101,21 @@ export default function Login() {
 
     setRecoverySending(true);
     try {
-      await sendPasswordResetEmail(auth, recoveryEmail.trim());
-      setRecoverySuccess(true);
-      toast.success("Correo enviado", {
-        description: `Revise su bandeja de entrada en ${recoveryEmail.trim()}.`,
-      });
+      if (FIREBASE_CONFIGURED && auth) {
+        // Enviar el correo oficial de Firebase (asegura el reseteo real)
+        await sendPasswordResetEmail(auth, recoveryEmail.trim());
+        
+        // Opcional: Enviar también el correo formateado por Resend (Requisito de Tesis)
+        sendPasswordRecovery(recoveryEmail.trim(), {
+          clientName: "Usuario",
+          recoveryLink: "Revisa tu correo para el enlace oficial de Firebase."
+        }).catch(console.error);
+
+        setRecoverySuccess(true);
+        toast.success("Correo enviado", {
+          description: "Revisa tu bandeja de entrada o spam para encontrar el enlace oficial."
+        });
+      }
       setTimeout(() => {
         setShowRecover(false);
         setRecoveryEmail("");

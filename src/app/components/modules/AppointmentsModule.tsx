@@ -38,6 +38,7 @@ import {
 } from "../../utils/appointmentValidations";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
 import { useSuccessPopup } from "../../context/SuccessPopupContext";
+import { sendAppointmentEmail, sendAppointmentReschedule, sendAppointmentCancellation } from "../../services/resendService";
 
 export default function AppointmentsModule() {
   const { user, hasPermission } = useAuth();
@@ -299,6 +300,19 @@ export default function AppointmentsModule() {
       }
       toast.success(`Estado actualizado a ${newStatus}`);
       addLog("Actualizar", "turnos", `Turno de ${getPetName(appointment.petId)} → ${newStatus}`);
+      
+      // Enviar correo de cancelación si corresponde
+      if (newStatus === "Cancelado" || newStatus === "cancelled") {
+        const client = clients.find(c => c.id === appointment.clientId);
+        if (client?.email) {
+          sendAppointmentCancellation(client.email, {
+            clientName: client.fullName,
+            petName: getPetName(appointment.petId),
+            date: format(new Date(appointment.date), "dd/MM/yyyy"),
+            time: appointment.startTime || "Sin hora definida",
+          }).catch(console.error);
+        }
+      }
     } catch (err: any) {
       console.error("[AppointmentsModule] Error actualizando estado:", err);
       toast.error(err?.code === "permission-denied" ? "Sin permisos para actualizar el turno." : "Error al actualizar el estado del turno.");
@@ -437,6 +451,23 @@ export default function AppointmentsModule() {
         }
         showSuccess("Turno actualizado exitosamente ✓");
         addLog("Actualizar", "turnos", `Turno actualizado para ${getPetName(formData.petId)}`);
+
+        // Send reschedule email if date or time changed
+        const oldDateStr = format(new Date(selectedAppointment.date), "dd/MM/yyyy");
+        const newDateStr = format(formData.date, "dd/MM/yyyy");
+        if (oldDateStr !== newDateStr || selectedAppointment.startTime !== formData.startTime) {
+          const client = clients.find(c => c.id === formData.clientId);
+          if (client?.email) {
+            sendAppointmentReschedule(client.email, {
+              clientName: client.fullName,
+              petName: getPetName(formData.petId),
+              oldDate: oldDateStr,
+              oldTime: selectedAppointment.startTime || "Sin hora definida",
+              newDate: newDateStr,
+              newTime: formData.startTime || "Sin hora definida",
+            }).catch(console.error);
+          }
+        }
       } else {
         // ── Create new appointment — write directly to Firestore ────────
         const newPayload: Record<string, any> = {
@@ -465,6 +496,19 @@ export default function AppointmentsModule() {
         }
         showSuccess("Turno agendado y confirmado exitosamente ✓");
         addLog("Crear", "turnos", `Turno creado para ${getPetName(formData.petId)} — ${getClientName(formData.clientId)}`);
+
+        // Send appointment created email
+        const client = clients.find(c => c.id === formData.clientId);
+        if (client?.email) {
+          sendAppointmentEmail(client.email, {
+            clientName: client.fullName,
+            petName: getPetName(formData.petId),
+            date: format(formData.date, "dd/MM/yyyy"),
+            time: formData.startTime || "Sin hora definida",
+            doctorName: getDoctorName(formData.doctorId) || "No asignado",
+            reason: formData.notes || "Control general",
+          }).catch(console.error);
+        }
       }
       handleCancel();
     } catch (err: any) {

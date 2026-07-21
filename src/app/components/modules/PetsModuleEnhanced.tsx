@@ -35,6 +35,7 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
 import { useSuccessPopup } from "../../context/SuccessPopupContext";
+import { sendPetRegistered } from "../../services/resendService";
 
 export default function PetsModuleEnhanced() {
   const { user } = useAuth();
@@ -313,6 +314,17 @@ export default function PetsModuleEnhanced() {
       } else {
         await registrarMascota(petToSave, user?.id || "1");
         showSuccess(`Mascota ${petToSave.name} registrada exitosamente.`);
+        
+        // Enviar email de registro de mascota
+        const client = clients.find(c => c.id === formData.clientId);
+        if (client?.email) {
+          sendPetRegistered(client.email, {
+            clientName: client.fullName,
+            petName: petToSave.name,
+            species: getSpeciesName(petToSave.speciesId),
+            breed: getBreedName(petToSave.speciesId, petToSave.breedId)
+          }).catch(console.error);
+        }
       }
       handleCancel();
     } catch {
