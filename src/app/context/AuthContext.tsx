@@ -25,6 +25,7 @@ import {
 import { auth, db, FIREBASE_CONFIGURED } from "../firebase/config";
 import { User, PermissionName } from "../types";
 import { setAuditActor, audit, type AuditActor } from "../services/auditoriaService";
+import { logger } from "../utils/logger";
 
 // Construye el actor de auditoría a partir del usuario de la app.
 function toAuditActor(u: User): AuditActor {
@@ -121,9 +122,9 @@ async function loadUserFromFirestore(fbUser: FirebaseUser): Promise<User | null>
       lastLogin: new Date(),
     };
   } catch (err) {
-    // DEBUG temporal: la UI muestra un mensaje genérico, pero acá queda visible
-    // la causa real (p. ej. permission-denied si las reglas no están publicadas).
-    console.error("[AuthContext] loadUserFromFirestore falló:", err);
+    // La UI muestra un mensaje genérico; en dev queda visible la causa real
+    // (p. ej. permission-denied si las reglas no están publicadas).
+    logger.warn("[AuthContext] loadUserFromFirestore falló:", err);
     return null;
   }
 }
@@ -242,8 +243,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err: any) {
       // Firebase auth errors (wrong password, user not found, etc.) are
       // intentionally swallowed here — the UI shows a generic message.
-      // DEBUG temporal: dejamos visible el código/mensaje real en consola.
-      console.error("[AuthContext] login falló:", err?.code || err?.message || err);
+      logger.warn("[AuthContext] login falló:", err?.code || err?.message || err);
       return false;
     }
   };

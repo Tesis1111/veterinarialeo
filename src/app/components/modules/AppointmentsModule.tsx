@@ -6,6 +6,10 @@ import {
   registrarTurno,
   modificarTurno,
   cancelarTurno,
+  calcEndTime,
+  mostrarCalendarioTurno,
+  toDateStr,
+  SlotOcupadoError,
 } from "../../services/turnoService";
 import { traerClientes } from "../../services/clienteService";
 import { traerMascotas } from "../../services/mascotaService";
@@ -14,7 +18,7 @@ import { suscribirTiposEvento, suscribirTiposServicio } from "../../services/par
 import { traerDoctores } from "../../services/doctorService";
 import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
 import {
-  collection, addDoc, updateDoc, doc, onSnapshot, serverTimestamp, Timestamp, query, orderBy, where,
+  collection, onSnapshot, Timestamp, query, where,
 } from "firebase/firestore";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
@@ -87,8 +91,12 @@ export default function AppointmentsModule() {
   useEffect(() => {
     // ── Real-time subscription to turnos via onSnapshot ────────────────
     if (FIREBASE_CONFIGURED && db) {
-      // Sin orderBy para evitar requerir índice compuesto — ordenamos client-side
-      const q = query(collection(db, "turnos"));
+      // Ventana [hoy-30d, hoy+90d): cubre el calendario visible sin descargar
+      // el histórico completo. Fechas fuera de la ventana se cargan on-demand
+      // (ver efecto con mostrarCalendarioTurno más abajo).
+      const rangeStart = new Date(); rangeStart.setDate(rangeStart.getDate() - 30); rangeStart.setHours(0, 0, 0, 0);
+      const rangeEnd = new Date(); rangeEnd.setDate(rangeEnd.getDate() + 90); rangeEnd.setHours(0, 0, 0, 0);
+      const q = query(collection(db, "turnos"), where("date", ">=", rangeStart), where("date", "<", rangeEnd));
       const unsub = onSnapshot(q, (snap) => {
         const safeDate = (v: any): Date => {
           if (!v) return new Date();
@@ -145,7 +153,7 @@ export default function AppointmentsModule() {
         () => traerMascotas().then(setPets).catch(() => setPets([]))
       );
       traerTodosLosHorarios().then(setDoctorSchedules).catch(() => setDoctorSchedules([]));
-      suscribirTiposEvento(setTiposEvento);
+      const unsubTiposEvento = suscribirTiposEvento(setTiposEvento);
 
       // Real-time doctors subscription so new vets appear automatically
       const unsubDoctors = onSnapshot(
@@ -167,7 +175,7 @@ export default function AppointmentsModule() {
       
       const unsubTiposServicio = suscribirTiposServicio(setTiposServicio);
       
-      return () => { unsub(); unsubClients(); unsubPets(); unsubDoctors(); unsubTiposServicio(); };
+      return () => { unsub(); unsubClients(); unsubPets(); unsubDoctors(); unsubTiposServicio(); unsubTiposEvento(); };
     } else {
       // Firebase not configured — show empty state
       console.warn("[AppointmentsModule] Firebase no configurado. Los datos no se cargarán.");
@@ -188,23 +196,15 @@ export default function AppointmentsModule() {
 
   const getStatusColor = (status: AppointmentStatus): string => {
     switch (status) {
-      case "scheduled": return "bg-blue-100 text-blue-800";
-      case "confirmed": return "bg-green-100 text-green-800";
-      case "completed": return "bg-gray-100 text-gray-800";
-      case "cancelled": return "bg-red-100 text-red-800";
+      case "Programado": return "bg-blue-100 text-blue-800";
+      case "Confirmado": return "bg-green-100 text-green-800";
+      case "Completado": return "bg-gray-100 text-gray-800";
+      case "Cancelado": return "bg-red-100 text-red-800";
       default: return "bg-gray-100 text-gray-800";
     }
   };
 
-  const getStatusLabel = (status: AppointmentStatus): string => {
-    switch (status) {
-      case "scheduled": return "Programado";
-      case "confirmed": return "Confirmado";
-      case "completed": return "Completado";
-      case "cancelled": return "Cancelado";
-      default: return status;
-    }
-  };
+  const getStatusLabel = (status: AppointmentStatus): string => status;
 
   const getTypeLabel = (type: string) => {
     const dynamicType = tiposServicio.find(t => t.id === type || t.name.toLowerCase() === type.toLowerCase());
@@ -216,10 +216,25 @@ export default function AppointmentsModule() {
     return dynamicType?.color || "bg-gray-100 text-gray-800";
   };
 
+  // ── Turnos fuera de la ventana suscrita (fetch puntual por fecha) ──
+  const [outOfRangeAppointments, setOutOfRangeAppointments] = useState<Appointment[]>([]);
+  useEffect(() => {
+    const sel = new Date(selectedDate); sel.setHours(0, 0, 0, 0);
+    const rangeStart = new Date(); rangeStart.setDate(rangeStart.getDate() - 30); rangeStart.setHours(0, 0, 0, 0);
+    const rangeEnd = new Date(); rangeEnd.setDate(rangeEnd.getDate() + 90); rangeEnd.setHours(0, 0, 0, 0);
+    if (sel >= rangeStart && sel < rangeEnd) {
+      setOutOfRangeAppointments([]);
+      return;
+    }
+    mostrarCalendarioTurno(toDateStr(sel))
+      .then(setOutOfRangeAppointments)
+      .catch(() => setOutOfRangeAppointments([]));
+  }, [selectedDate]);
+
   // ── Modificadores del Calendario ────────────────────────────────
   const modifiers = useMemo(() => {
     const daysWithAppts = (appointments ?? [])
-      .filter(apt => apt.status !== "Cancelado" && apt.status !== "cancelled")
+      .filter(apt => apt.status !== "Cancelado")
       .map(apt => {
         try { return new Date(apt.date); } catch { return null; }
       })
@@ -233,10 +248,10 @@ export default function AppointmentsModule() {
 
   // ── Appointments filtrados ──────────────────────────────────────
   const appointmentsForDate = useMemo(() => {
-    return (appointments ?? [])
+    return [...(appointments ?? []), ...outOfRangeAppointments]
       .filter(apt => {
         if (!apt || !apt.date) return false;
-        if (apt.status === "Cancelado" || apt.status === "cancelled") return false;
+        if (apt.status === "Cancelado") return false;
         
         const dynamicType = tiposServicio.find(t => t.id === apt.type || t.name.toLowerCase() === apt.type.toLowerCase());
         const isDaycare = dynamicType ? dynamicType.name.toLowerCase().includes("guarder") : apt.type === "daycare";
@@ -262,7 +277,7 @@ export default function AppointmentsModule() {
         if (!apt || !apt.date) return false;
         try {
           const aptDate = new Date(apt.date); aptDate.setHours(0, 0, 0, 0);
-          return aptDate >= today && apt.status !== "Cancelado" && apt.status !== "cancelled" && apt.status !== "Completado" && apt.status !== "completed";
+          return aptDate >= today && apt.status !== "Cancelado" && apt.status !== "Completado";
         } catch { return false; }
       })
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
@@ -286,23 +301,17 @@ export default function AppointmentsModule() {
     if (!appointment) return;
 
     try {
-      if (FIREBASE_CONFIGURED && db) {
-        await updateDoc(doc(db, "turnos", appointmentId), {
-          status: newStatus,
-          estado: newStatus,
-          updatedAt: serverTimestamp(),
-          updatedBy: user?.id || "1",
-        });
-        showSuccess(`El estado del turno ha cambiado a ${getStatusLabel(newStatus)} ✓`);
+      // cancelarTurno libera además el slot del profesional (batch atómico)
+      if (newStatus === "Cancelado") {
+        await cancelarTurno(appointmentId, "Cancelado por el usuario", user?.id || "1");
       } else {
         await modificarTurno(appointmentId, { status: newStatus }, user?.id || "1");
-        setAppointments(prev => prev.map(apt => apt.id === appointmentId ? { ...apt, status: newStatus } : apt));
       }
-      toast.success(`Estado actualizado a ${newStatus}`);
+      showSuccess(`El estado del turno ha cambiado a ${newStatus} ✓`);
       addLog("Actualizar", "turnos", `Turno de ${getPetName(appointment.petId)} → ${newStatus}`);
-      
+
       // Enviar correo de cancelación si corresponde
-      if (newStatus === "Cancelado" || newStatus === "cancelled") {
+      if (newStatus === "Cancelado") {
         const client = clients.find(c => c.id === appointment.clientId);
         if (client?.email) {
           sendAppointmentCancellation(client.email, {
@@ -310,7 +319,7 @@ export default function AppointmentsModule() {
             petName: getPetName(appointment.petId),
             date: format(new Date(appointment.date), "dd/MM/yyyy"),
             time: appointment.startTime || "Sin hora definida",
-          }).catch(console.error);
+          }).catch(() => toast.warning("El turno se actualizó, pero no se pudo enviar el correo al cliente"));
         }
       }
     } catch (err: any) {
@@ -359,12 +368,12 @@ export default function AppointmentsModule() {
         apt.petId === formData.petId &&
         isSameDay(new Date(apt.date), formData.date) &&
         apt.startTime === formData.startTime &&
-        apt.status !== "cancelled"
+        apt.status !== "Cancelado"
       );
     }
     if (formData.type === "daycare" && formData.dateFrom && formData.dateTo) {
       return !!appointments.find(apt => {
-        if (apt.id === selectedAppointment?.id || apt.type !== "daycare" || apt.status === "cancelled" ||
+        if (apt.id === selectedAppointment?.id || apt.type !== "daycare" || apt.status === "Cancelado" ||
           apt.clientId !== formData.clientId || apt.petId !== formData.petId || !apt.dateFrom || !apt.dateTo) return false;
         return formData.dateFrom! <= new Date(apt.dateTo) && formData.dateTo! >= new Date(apt.dateFrom);
       });
@@ -407,7 +416,7 @@ export default function AppointmentsModule() {
         apt.doctorId === formData.doctorId &&
         isSameDay(new Date(apt.date), formData.date) &&
         apt.startTime === formData.startTime &&
-        apt.status !== "cancelled" && apt.status !== "Cancelado"
+        apt.status !== "Cancelado"
       );
       if (overbooked) {
         toast.error("El profesional ya tiene un turno en ese horario. Elegí otro horario.");
@@ -415,11 +424,10 @@ export default function AppointmentsModule() {
       }
     }
 
-    const calcEndTime = (start: string) =>
-      `${parseInt(start.split(':')[0])}:${(parseInt(start.split(':')[1]) + 30).toString().padStart(2, '0')}`;
-
     try {
-      const appointmentData = {
+      // Shape canónico del documento turno (solo campos en inglés; los slots y
+      // la atomicidad los maneja turnoService con writeBatch).
+      const appointmentData: Record<string, any> = {
         clientId: formData.clientId,
         petId: formData.petId,
         doctorId: formData.doctorId || null,
@@ -431,24 +439,18 @@ export default function AppointmentsModule() {
         tiposEvento: formData.eventoTipoId ? formData.eventoTipoId.split(",").filter(Boolean) : [],
         type: formData.type,
       };
+      if (formData.type === "daycare") {
+        appointmentData.dateFrom = formData.dateFrom ?? null;
+        appointmentData.dateTo = formData.dateTo ?? null;
+      }
 
       if (isEditing && selectedAppointment) {
         // ── Update existing appointment ────────────────────────────────
-        const updatePayload: Record<string, any> = {
-          ...appointmentData,
-          status: selectedAppointment.status,
-          updatedAt: FIREBASE_CONFIGURED ? serverTimestamp() : new Date(),
-          updatedBy: user?.id || "1",
-        };
-        if (formData.type === "daycare") {
-          updatePayload.dateFrom = formData.dateFrom ?? null;
-          updatePayload.dateTo = formData.dateTo ?? null;
-        }
-        if (FIREBASE_CONFIGURED && db) {
-          await updateDoc(doc(db, "turnos", selectedAppointment.id), updatePayload);
-        } else {
-          await modificarTurno(selectedAppointment.id, appointmentData, user?.id || "1");
-        }
+        await modificarTurno(
+          selectedAppointment.id,
+          { ...appointmentData, status: selectedAppointment.status },
+          user?.id || "1"
+        );
         showSuccess("Turno actualizado exitosamente ✓");
         addLog("Actualizar", "turnos", `Turno actualizado para ${getPetName(formData.petId)}`);
 
@@ -465,35 +467,12 @@ export default function AppointmentsModule() {
               oldTime: selectedAppointment.startTime || "Sin hora definida",
               newDate: newDateStr,
               newTime: formData.startTime || "Sin hora definida",
-            }).catch(console.error);
+            }).catch(() => toast.warning("El turno se actualizó, pero no se pudo enviar el correo al cliente"));
           }
         }
       } else {
-        // ── Create new appointment — write directly to Firestore ────────
-        const newPayload: Record<string, any> = {
-          ...appointmentData,
-          clienteId: formData.clientId,
-          mascotaId: formData.petId,
-          fecha: formData.date,
-          hora: formData.startTime || null,
-          status: "Confirmado",
-          estado: "Confirmado",
-          notas: formData.notes || null,
-          serviceId: formData.type,
-          creadoEn: FIREBASE_CONFIGURED ? serverTimestamp() : new Date(),
-          createdAt: FIREBASE_CONFIGURED ? serverTimestamp() : new Date(),
-          createdBy: user?.id || "1",
-        };
-        if (formData.type === "daycare") {
-          newPayload.dateFrom = formData.dateFrom ?? null;
-          newPayload.dateTo = formData.dateTo ?? null;
-        }
-
-        if (FIREBASE_CONFIGURED && db) {
-          await addDoc(collection(db, "turnos"), newPayload);
-        } else {
-          await registrarTurno({ ...appointmentData, status: "Confirmado", estado: "Confirmado" }, user?.id || "1");
-        }
+        // ── Create new appointment — vía servicio (batch + slot + auditoría) ──
+        await registrarTurno({ ...appointmentData, status: "Confirmado" } as any, user?.id || "1");
         showSuccess("Turno agendado y confirmado exitosamente ✓");
         addLog("Crear", "turnos", `Turno creado para ${getPetName(formData.petId)} — ${getClientName(formData.clientId)}`);
 
@@ -507,15 +486,17 @@ export default function AppointmentsModule() {
             time: formData.startTime || "Sin hora definida",
             doctorName: getDoctorName(formData.doctorId) || "No asignado",
             reason: formData.notes || "Control general",
-          }).catch(console.error);
+          }).catch(() => toast.warning("El turno se agendó, pero no se pudo enviar el correo al cliente"));
         }
       }
       handleCancel();
     } catch (err: any) {
       console.error("[AppointmentsModule] Error guardando turno:", err);
-      const msg = err?.code === "permission-denied"
-        ? "Sin permisos. Verificá que estás autenticado como recepcionista o admin."
-        : err?.message ?? "Error al guardar el turno. Intente nuevamente.";
+      const msg = err instanceof SlotOcupadoError
+        ? err.message
+        : err?.code === "permission-denied"
+          ? "El horario ya está reservado o no tenés permisos para gestionar turnos."
+          : err?.message ?? "Error al guardar el turno. Intente nuevamente.";
       toast.error(msg);
     }
   };
@@ -548,19 +529,8 @@ export default function AppointmentsModule() {
   const handleDelete = async () => {
     if (selectedAppointment) {
       try {
-        if (FIREBASE_CONFIGURED && db) {
-          await updateDoc(doc(db, "turnos", selectedAppointment.id), {
-            status: "Cancelado",
-            estado: "Cancelado",
-            cancellationReason: "Eliminado por el usuario",
-            cancelledAt: serverTimestamp(),
-            updatedBy: user?.id || "1",
-          });
-          // onSnapshot removes it from list automatically if filtered
-        } else {
-          await cancelarTurno(selectedAppointment.id, "Eliminado por el usuario", user?.id || "1");
-          setAppointments(prev => prev.filter(apt => apt.id !== selectedAppointment.id));
-        }
+        // Cancela y libera el slot en un solo batch; onSnapshot refresca la lista
+        await cancelarTurno(selectedAppointment.id, "Eliminado por el usuario", user?.id || "1");
         toast.success("Turno cancelado");
         addLog("Eliminar", "turnos", `Turno ${selectedAppointment.id} cancelado`);
         handleCancel();

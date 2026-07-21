@@ -47,6 +47,13 @@ export interface User {
   permissions?: PermissionName[];
   phone?: string;
   active: boolean;
+  // Campos extendidos persistidos en /usuarios (usuarioService)
+  uid?: string;
+  nombre?: string;
+  apellido?: string;
+  sexo?: string;
+  domicilio?: string;
+  profesion?: string;
   passwordResetToken?: string;
   passwordResetExpires?: Date;
   createdAt: Date;
@@ -280,25 +287,35 @@ export interface Appointment {
   client?: Client; // Populated cuando se necesita
   petId: string;
   pet?: Pet; // Populated cuando se necesita
-  serviceId: string;
+  /** @deprecated legado: guardaba el tipo de turno; usar `type` */
+  serviceId?: string;
   service?: Service; // Populated cuando se necesita
   doctorId?: string;
   doctor?: Doctor; // Populated cuando se necesita
-  
+
+  // Tipo de turno: 'clinic' | 'grooming' | 'daycare' (o id de tipoServicio)
+  type?: string;
+  // Motivos de consulta (ids de tiposEvento)
+  tiposEvento?: string[];
+
   // Fecha y hora
   date: Date;
   startTime: string; // Formato HH:mm
   endTime: string; // Formato HH:mm
-  
+  // Rango de estadía (solo guardería)
+  dateFrom?: Date;
+  dateTo?: Date;
+
   // Estado
   status: AppointmentStatus;
-  
+  deleted?: boolean;
+
   // Información adicional
   reason?: string;
   notes?: string;
   cancellationReason?: string;
   cancelledAt?: Date;
-  
+
   // Auditoría
   createdAt: Date;
   createdBy: string;

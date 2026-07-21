@@ -1,5 +1,6 @@
-const CACHE_NAME = 'vetcare-v1';
-const RUNTIME_CACHE = 'vetcare-runtime';
+const CACHE_NAME = 'vetcare-v2';
+const RUNTIME_CACHE = 'vetcare-runtime-v2';
+const RUNTIME_MAX_ENTRIES = 60;
 
 // Recursos críticos para cachear durante la instalación
 const PRECACHE_URLS = [
@@ -9,14 +10,17 @@ const PRECACHE_URLS = [
   '/icons/icon-512x512.png'
 ];
 
-// Instalación del Service Worker
+// Instalación del Service Worker.
+// Precache tolerante: si un recurso falta (p. ej. un ícono), no aborta la
+// instalación entera como haría cache.addAll (que es atómico).
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('Cache abierto');
-        return cache.addAll(PRECACHE_URLS);
-      })
+      .then((cache) =>
+        Promise.all(
+          PRECACHE_URLS.map((url) => cache.add(url).catch(() => null))
+        )
+      )
       .then(() => self.skipWaiting())
   );
 });
@@ -35,17 +39,37 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Estrategia de caché: Network First con fallback a Cache
+// Limita el tamaño del cache de runtime (elimina las entradas más viejas)
+async function trimCache(cache, maxEntries) {
+  const keys = await cache.keys();
+  if (keys.length <= maxEntries) return;
+  await Promise.all(keys.slice(0, keys.length - maxEntries).map((key) => cache.delete(key)));
+}
+
+// Estrategia de caché: Network First con fallback a Cache — SOLO para
+// recursos estáticos del propio origen. Nunca interceptar Firestore,
+// Google APIs, ni el endpoint serverless /api.
 self.addEventListener('fetch', (event) => {
   // Omitir requests que no son GET
   if (event.request.method !== 'GET') {
     return;
   }
 
-  // Omitir requests de navegadores en modo desarrollo
-  if (event.request.url.includes('chrome-extension://') || 
-      event.request.url.includes('localhost:') ||
-      event.request.url.includes('127.0.0.1:')) {
+  const url = new URL(event.request.url);
+
+  // Solo same-origin: excluye firestore.googleapis.com, identitytoolkit,
+  // securetoken, gstatic, extensiones, etc.
+  if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  // Nunca cachear el endpoint serverless
+  if (url.pathname.startsWith('/api/')) {
+    return;
+  }
+
+  // Omitir desarrollo local
+  if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
     return;
   }
 
@@ -56,6 +80,7 @@ self.addEventListener('fetch', (event) => {
           // Si la respuesta es válida, clonamos y guardamos en cache
           if (response.status === 200) {
             cache.put(event.request, response.clone());
+            trimCache(cache, RUNTIME_MAX_ENTRIES);
           }
           return response;
         })

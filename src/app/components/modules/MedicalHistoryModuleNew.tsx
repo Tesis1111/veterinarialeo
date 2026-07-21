@@ -453,7 +453,7 @@ export default function MedicalHistoryModule() {
             reminderType: isVaccinationEvent(addForm.eventType) ? "Próxima Vacuna" : "Próximo Control",
             date: format(proximoRefuerzo, "dd/MM/yyyy"),
             notes: addForm.notes || "Recuerde agendar su turno a tiempo."
-          }).catch(console.error);
+          }).catch(() => toast.warning("El registro se guardó, pero no se pudo enviar el recordatorio por correo"));
         }
       }
 

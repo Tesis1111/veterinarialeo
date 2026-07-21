@@ -9,7 +9,9 @@ import {
   reactivarCliente,
   eliminarClienteFisico,
   ValidarUnicidadCliente,
+  contarDependenciasCliente,
 } from "../../services/clienteService";
+import type { DependenciasCliente } from "../../services/cascadeHelpers";
 import { traerMascotas } from "../../services/mascotaService";
 import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
 import { collection, onSnapshot, query, where, Timestamp } from "firebase/firestore";
@@ -29,7 +31,10 @@ import { useSuccessPopup } from "../../context/SuccessPopupContext";
 import { sendWelcomeEmail } from "../../services/resendService";
 
 export default function ClientsModule() {
-  const { user } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
+  // Gate de escritura: coincide con firestore.rules (write de /clientes solo
+  // admin + recepcionista). El veterinario/peluquero solo ve la lista.
+  const canManage = hasPermission("manage_clients");
   const { showSuccess } = useSuccessPopup();
   const [clients, setClients] = useState<Client[]>([]);
   const [pets, setPets] = useState<Pet[]>([]);
@@ -42,6 +47,8 @@ export default function ClientsModule() {
   const [statusFilter, setStatusFilter] = useState<"activos" | "inactivos" | "todos">("activos");
   // Cliente objetivo del borrado físico definitivo
   const [clientToPurge, setClientToPurge] = useState<Client | null>(null);
+  // Conteo de datos asociados que arrastraría el borrado definitivo
+  const [purgeDeps, setPurgeDeps] = useState<DependenciasCliente | null>(null);
 
   useEffect(() => {
     const tab = localStorage.getItem("clients_initial_tab");
@@ -50,6 +57,19 @@ export default function ClientsModule() {
       localStorage.removeItem("clients_initial_tab");
     }
   }, []);
+
+  // Sin permiso de gestión no existe la pestaña "new"
+  useEffect(() => {
+    if (!canManage && activeTab === "new") setActiveTab("list");
+  }, [canManage, activeTab]);
+
+  // Al abrir el diálogo de borrado definitivo, contar dependencias
+  useEffect(() => {
+    if (clientToPurge) {
+      setPurgeDeps(null);
+      contarDependenciasCliente(clientToPurge.id).then(setPurgeDeps).catch(() => setPurgeDeps(null));
+    }
+  }, [clientToPurge]);
 
   const [formData, setFormData] = useState({
     fullName: "",
@@ -237,7 +257,8 @@ export default function ClientsModule() {
         
         // Enviar email de bienvenida
         if (formData.email) {
-          sendWelcomeEmail(formData.email, { clientName: formData.fullName }).catch(console.error);
+          sendWelcomeEmail(formData.email, { clientName: formData.fullName })
+            .catch(() => toast.warning("El cliente se guardó, pero no se pudo enviar el correo de bienvenida"));
         }
       }
       handleCancel();
@@ -332,15 +353,17 @@ export default function ClientsModule() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2 bg-orange-50 mb-6">
+        <TabsList className={`grid w-full ${canManage ? "grid-cols-2" : "grid-cols-1"} bg-orange-50 mb-6`}>
           <TabsTrigger value="list">
             <List className="h-4 w-4 mr-2" />
             Lista de Clientes
           </TabsTrigger>
-          <TabsTrigger value="new">
-            <UserPlus className="h-4 w-4 mr-2" />
-            {isEditing ? "Editar Cliente" : "Nuevo Cliente"}
-          </TabsTrigger>
+          {canManage && (
+            <TabsTrigger value="new">
+              <UserPlus className="h-4 w-4 mr-2" />
+              {isEditing ? "Editar Cliente" : "Nuevo Cliente"}
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="new">
@@ -573,35 +596,41 @@ export default function ClientsModule() {
                           <div className="flex items-center justify-center gap-1">
                             {client.deleted ? (
                               <>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => handleReactivate(client)}
-                                  className="text-green-600 hover:text-green-700 hover:bg-green-50"
-                                >
-                                  <RotateCcw className="h-4 w-4 mr-1" />
-                                  Reactivar
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => setClientToPurge(client)}
-                                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                                >
-                                  <Trash2 className="h-4 w-4 mr-1" />
-                                  Eliminar
-                                </Button>
+                                {canManage && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleReactivate(client)}
+                                    className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                                  >
+                                    <RotateCcw className="h-4 w-4 mr-1" />
+                                    Reactivar
+                                  </Button>
+                                )}
+                                {isAdmin && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => setClientToPurge(client)}
+                                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                  >
+                                    <Trash2 className="h-4 w-4 mr-1" />
+                                    Eliminar
+                                  </Button>
+                                )}
                               </>
                             ) : (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => selectClient(client)}
-                                className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
-                              >
-                                <Edit className="h-4 w-4 mr-1" />
-                                Editar
-                              </Button>
+                              canManage && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => selectClient(client)}
+                                  className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                                >
+                                  <Edit className="h-4 w-4 mr-1" />
+                                  Editar
+                                </Button>
+                              )
                             )}
                           </div>
                         </TableCell>
@@ -649,7 +678,19 @@ export default function ClientsModule() {
             <AlertDialogDescription>
               Esta acción es <span className="font-semibold">permanente e irreversible</span>. Se
               borrará de la base de datos el cliente{" "}
-              <span className="font-semibold">{clientToPurge?.fullName}</span>. No podrá recuperarse.
+              <span className="font-semibold">{clientToPurge?.fullName}</span>
+              {purgeDeps && (purgeDeps.mascotas > 0 || purgeDeps.turnosVigentes > 0 || purgeDeps.historiales > 0) && (
+                <>
+                  {" "}junto con{" "}
+                  <span className="font-semibold">
+                    {purgeDeps.mascotas} mascota{purgeDeps.mascotas !== 1 && "s"},{" "}
+                    {purgeDeps.turnosVigentes} turno{purgeDeps.turnosVigentes !== 1 && "s"} vigente{purgeDeps.turnosVigentes !== 1 && "s"} y{" "}
+                    {purgeDeps.historiales} historial{purgeDeps.historiales !== 1 && "es"}
+                  </span>{" "}
+                  asociados
+                </>
+              )}
+              . No podrá recuperarse.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

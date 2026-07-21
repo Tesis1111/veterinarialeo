@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { db, FIREBASE_CONFIGURED } from "../../firebase/config";
-import { collection, onSnapshot, Timestamp } from "firebase/firestore";
+import { collection, onSnapshot, query, where, Timestamp } from "firebase/firestore";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
@@ -46,9 +46,23 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-export default function ReportsModule() {
-  const [clients, setClients] = useState<any[]>([]);
-  const [pets, setPets] = useState<any[]>([]);
+interface ReportsModuleProps {
+  /**
+   * Datos ya suscritos por el contenedor (Dashboard). Si se proveen, el módulo
+   * NO abre sus propias suscripciones a clientes/mascotas — evita duplicar
+   * listeners y lecturas cuando está embebido en Inicio.
+   */
+  externalClients?: any[];
+  externalPets?: any[];
+}
+
+export default function ReportsModule({ externalClients, externalPets }: ReportsModuleProps = {}) {
+  const [ownClients, setOwnClients] = useState<any[]>([]);
+  const [ownPets, setOwnPets] = useState<any[]>([]);
+  const clients = externalClients ?? ownClients;
+  const pets = externalPets ?? ownPets;
+  const setClients = setOwnClients;
+  const setPets = setOwnPets;
   const [medicalRecords, setMedicalRecords] = useState<any[]>([]);
   const [appointments, setAppointments] = useState<any[]>([]);
   const [doctors, setDoctors] = useState<any[]>([]);
@@ -83,30 +97,59 @@ export default function ReportsModule() {
       return;
     }
 
-    // Real-time subscriptions for all collections
+    // Cargamos clientes/mascotas COMPLETOS (incluidos dados de baja) para que
+    // la resolución de nombres nunca muestre "Desconocido/N/D" — salvo que el
+    // contenedor ya los provea por props (Dashboard embebido).
+    const unsubs: Array<() => void> = [];
+
+    if (!externalClients) {
+      unsubs.push(onSnapshot(collection(db, "clientes"),
+        snap => setClients(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+        () => import("../../services/clienteService").then(m => m.traerClientes(true)).then(setClients).catch(() => {})
+      ));
+    }
+    if (!externalPets) {
+      unsubs.push(onSnapshot(collection(db, "mascotas"),
+        snap => setPets(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+        () => import("../../services/mascotaService").then(m => m.traerMascotas()).then(setPets).catch(() => {})
+      ));
+    }
+
+    unsubs.push(onSnapshot(collection(db, "doctores"),
+      snap => setDoctors(snap.docs.map(d => ({
+        id: d.id,
+        name: d.data().fullName ?? d.data().name ?? "",
+        specialty: d.data().specialty ?? "",
+        available: d.data().available !== false,
+      }))),
+      () => import("../../services/doctorService").then(m => m.traerTodosLosDoctores()).then(docs => {
+        setDoctors(docs.map((d: any) => ({ id: d.id, name: d.fullName ?? d.name ?? "", specialty: d.specialty ?? "", available: d.available })));
+      }).catch(() => {})
+    ));
+    unsubs.push(suscribirRazas(setRazas));
+    unsubs.push(suscribirTiposServicio(setTiposServicio));
+
+    return () => { unsubs.forEach(u => u()); };
+  }, []);
+
+  // Historiales y turnos acotados por el rango de fechas activo — query
+  // server-side sobre `date` (rango de un solo campo: sin índice compuesto).
+  useEffect(() => {
+    if (!FIREBASE_CONFIGURED || !db) return;
     const toDate = (v: any) => v instanceof Timestamp ? v.toDate() : v instanceof Date ? v : new Date(v);
+    const rangeEnd = new Date(dateTo);
+    rangeEnd.setDate(rangeEnd.getDate() + 1);
+    rangeEnd.setHours(0, 0, 0, 0);
 
-    // Cargamos TODOS los registros (incluidos los dados de baja) para que la
-    // resolución de nombres nunca muestre "Desconocido/N/D". El alcance
-    // (activos/inactivos/todos) se aplica luego sobre estas listas completas.
-    const unsubClients = onSnapshot(collection(db, "clientes"),
-      snap => setClients(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      () => import("../../services/clienteService").then(m => m.traerClientes(true)).then(setClients).catch(() => {})
-    );
-
-    const unsubPets = onSnapshot(collection(db, "mascotas"),
-      snap => setPets(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      () => import("../../services/mascotaService").then(m => m.traerMascotas()).then(setPets).catch(() => {})
-    );
-
-    const unsubHistoriales = onSnapshot(collection(db, "historiales"),
+    const unsubHistoriales = onSnapshot(
+      query(collection(db, "historiales"), where("date", ">=", dateFrom), where("date", "<", rangeEnd)),
       snap => {
         setMedicalRecords(snap.docs.map(d => {
           const data = d.data();
           return {
             id: d.id,
             ...data,
-            date: data.fecha ? toDate(data.fecha) : data.date ? toDate(data.date) : new Date(),
+            date: data.date ? toDate(data.date) : data.fecha ? toDate(data.fecha) : new Date(),
             eventType: data.tipoEvento ?? data.eventType ?? "Consulta",
             professionalId: data.doctorId ?? data.professionalId ?? "",
           };
@@ -116,7 +159,8 @@ export default function ReportsModule() {
       () => import("../../services/historialService").then(m => m.traerTodosLosHistoriales()).then(setMedicalRecords).catch(() => {})
     );
 
-    const unsubTurnos = onSnapshot(collection(db, "turnos"),
+    const unsubTurnos = onSnapshot(
+      query(collection(db, "turnos"), where("date", ">=", dateFrom), where("date", "<", rangeEnd)),
       snap => setAppointments(snap.docs.map(d => {
         const data = d.data();
         return {
@@ -128,23 +172,8 @@ export default function ReportsModule() {
       () => import("../../services/turnoService").then(m => m.traerTurnos()).then(setAppointments).catch(() => {})
     );
 
-    const unsubDoctores = onSnapshot(collection(db, "doctores"),
-      snap => setDoctors(snap.docs.map(d => ({
-        id: d.id,
-        name: d.data().fullName ?? d.data().name ?? "",
-        specialty: d.data().specialty ?? "",
-        available: d.data().available !== false,
-      }))),
-      () => import("../../services/doctorService").then(m => m.traerTodosLosDoctores()).then(docs => {
-        setDoctors(docs.map((d: any) => ({ id: d.id, name: d.fullName ?? d.name ?? "", specialty: d.specialty ?? "", available: d.available })));
-      }).catch(() => {})
-    );
-
-    const unsubRazas = suscribirRazas(setRazas);
-    const unsubTiposServicio = suscribirTiposServicio(setTiposServicio);
-
-    return () => { unsubClients(); unsubPets(); unsubHistoriales(); unsubTurnos(); unsubDoctores(); unsubRazas(); unsubTiposServicio(); };
-  }, []);
+    return () => { unsubHistoriales(); unsubTurnos(); };
+  }, [dateFrom, dateTo]);
 
   // Listas según el alcance seleccionado. La resolución de nombres siempre usa
   // las listas completas (clients/pets), por eso nunca aparece "Desconocido".

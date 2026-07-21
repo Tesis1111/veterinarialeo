@@ -38,7 +38,10 @@ import { useSuccessPopup } from "../../context/SuccessPopupContext";
 import { sendPetRegistered } from "../../services/resendService";
 
 export default function PetsModuleEnhanced() {
-  const { user } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
+  // Gate de escritura: coincide con firestore.rules (write de /mascotas solo
+  // admin + recepcionista). El veterinario/peluquero solo ve la lista.
+  const canManage = hasPermission("manage_pets");
   const { addLog } = useAudit();
   const { showSuccess } = useSuccessPopup();
   const [pets, setPets] = useState<Pet[]>([]);
@@ -72,6 +75,11 @@ export default function PetsModuleEnhanced() {
       localStorage.removeItem("pets_initial_tab");
     }
   }, []);
+
+  // Sin permiso de gestión no existe la pestaña "new"
+  useEffect(() => {
+    if (!canManage && activeTab === "new") setActiveTab("list");
+  }, [canManage, activeTab]);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -323,7 +331,7 @@ export default function PetsModuleEnhanced() {
             petName: petToSave.name,
             species: getSpeciesName(petToSave.speciesId),
             breed: getBreedName(petToSave.speciesId, petToSave.breedId)
-          }).catch(console.error);
+          }).catch(() => toast.warning("La mascota se registró, pero no se pudo enviar el correo al cliente"));
         }
       }
       handleCancel();
@@ -558,15 +566,17 @@ export default function PetsModuleEnhanced() {
       )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2 bg-orange-50 mb-6">
+        <TabsList className={`grid w-full ${canManage ? "grid-cols-2" : "grid-cols-1"} bg-orange-50 mb-6`}>
           <TabsTrigger value="list">
             <List className="h-4 w-4 mr-2" />
             Lista de Mascotas
           </TabsTrigger>
-          <TabsTrigger value="new">
-            <PawPrint className="h-4 w-4 mr-2" />
-            {isEditing ? "Editar Mascota" : "Nueva Mascota"}
-          </TabsTrigger>
+          {canManage && (
+            <TabsTrigger value="new">
+              <PawPrint className="h-4 w-4 mr-2" />
+              {isEditing ? "Editar Mascota" : "Nueva Mascota"}
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="new">
@@ -994,37 +1004,43 @@ export default function PetsModuleEnhanced() {
                             <div className="flex items-center justify-center gap-1">
                               {pet.deleted ? (
                                 <>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => handleReactivatePet(pet)}
-                                    className="text-green-600 hover:text-green-700 hover:bg-green-50"
-                                    title="Reactivar"
-                                  >
-                                    <RotateCcw className="h-4 w-4" />
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => setPetToPurge(pet)}
-                                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                                    title="Eliminar definitivamente"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
+                                  {canManage && (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => handleReactivatePet(pet)}
+                                      className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                                      title="Reactivar"
+                                    >
+                                      <RotateCcw className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                  {isAdmin && (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => setPetToPurge(pet)}
+                                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                      title="Eliminar definitivamente"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  )}
                                 </>
                               ) : (
                                 <>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => selectPet(pet)}
-                                    className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
-                                    title="Editar"
-                                  >
-                                    <Edit className="h-4 w-4" />
-                                  </Button>
-                                  {!pet.deceased && (
+                                  {canManage && (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => selectPet(pet)}
+                                      className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                                      title="Editar"
+                                    >
+                                      <Edit className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                  {canManage && !pet.deceased && (
                                     <>
                                       <Button
                                         size="sm"

@@ -48,7 +48,6 @@ export function AuditProvider({ children }: { children: ReactNode }) {
         action: action as AuditLog["action"],
         module: module as AuditLog["module"],
         details,
-        ipAddress: "127.0.0.1",
         userAgent: typeof navigator !== "undefined" ? navigator.userAgent : undefined,
       };
 

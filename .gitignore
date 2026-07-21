@@ -5,6 +5,10 @@ node_modules/
 dist/
 build/
 
+# Credenciales de Firebase Admin (scripts de migración) — NUNCA commitear
+scripts/serviceAccount*.json
+scripts/backups/
+
 # Variables de entorno locales
 .env
 .env.local

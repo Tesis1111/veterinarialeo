@@ -9,6 +9,14 @@ import {
 import { db } from "../firebase/config";
 import { Pet, PetFormData, FormValidationResult } from "../types";
 import { audit } from "./auditoriaService";
+import {
+  commitInChunks,
+  opsCascadaSoftMascota,
+  opsCascadaFisicaMascota,
+  contarDependenciasMascota,
+} from "./cascadeHelpers";
+
+export { contarDependenciasMascota };
 
 const COL = "mascotas";
 
@@ -96,13 +104,22 @@ export async function marcarFallecida(id: string, reason: string, notes: string,
   return updated;
 }
 
-/** Baja lógica (soft-delete): la mascota queda en la base pero oculta por defecto. Reversible. */
+/**
+ * Baja lógica (soft-delete) EN CASCADA: marca deleted la mascota y cancela sus
+ * turnos vigentes (liberando los slots). Reversible para la mascota.
+ */
 export async function eliminarMascota(id: string, deletedBy: string): Promise<void> {
   requireDb("eliminarMascota");
-  await updateDoc(doc(db!, COL, id), { deleted: true, deletedBy, deletedAt: serverTimestamp() });
+  const ops = await opsCascadaSoftMascota(id, deletedBy);
+  ops.unshift({
+    type: "update",
+    ref: doc(db!, COL, id),
+    data: { deleted: true, deletedBy, deletedAt: serverTimestamp() },
+  });
+  await commitInChunks(ops);
   await audit({
     action: "DELETE", module: "pets", entityType: "mascota", entityId: id,
-    details: `Dio de baja (lógica) la mascota ${id}`,
+    details: `Dio de baja (lógica) la mascota ${id} y canceló sus turnos vigentes`,
   });
 }
 
@@ -116,22 +133,29 @@ export async function reactivarMascota(id: string, updatedBy: string): Promise<v
   });
 }
 
-/** Borrado FÍSICO: elimina el documento de Firestore de forma permanente e irreversible. */
+/**
+ * Borrado FÍSICO EN CASCADA: elimina permanentemente la mascota junto con sus
+ * historiales, turnos y slots asociados. Irreversible.
+ * (El delete de turnos requiere rol admin según firestore.rules.)
+ */
 export async function eliminarMascotaFisica(id: string): Promise<void> {
   requireDb("eliminarMascotaFisica");
-  await deleteDoc(doc(db!, COL, id));
+  const ops = await opsCascadaFisicaMascota(id);
+  ops.push({ type: "delete", ref: doc(db!, COL, id) });
+  await commitInChunks(ops);
   await audit({
     action: "DELETE", module: "pets", entityType: "mascota", entityId: id,
-    details: `Eliminó FÍSICAMENTE la mascota ${id}`,
+    details: `Eliminó FÍSICAMENTE la mascota ${id} con sus historiales y turnos`,
   });
 }
 
 export async function traerMascotas(clientId?: string): Promise<Pet[]> {
   requireDb("traerMascotas");
-  // Fetch all and filter client-side to avoid composite index issues
-  const snap = await getDocs(collection(db!, COL));
-  const all = snap.docs.map((d) => toPet(d.id, d.data())).filter(p => !p.deleted);
-  return clientId ? all.filter(p => p.clientId === clientId) : all;
+  // Filtros server-side de igualdad (Firestore los resuelve sin índice compuesto)
+  const constraints = [where("deleted", "==", false)];
+  if (clientId) constraints.push(where("clientId", "==", clientId));
+  const snap = await getDocs(query(collection(db!, COL), ...constraints));
+  return snap.docs.map((d) => toPet(d.id, d.data()));
 }
 
 export async function traerMascotaPorId(id: string): Promise<Pet | null> {

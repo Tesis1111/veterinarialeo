@@ -9,6 +9,11 @@ export interface ValidationResult {
   error?: string;
 }
 
+// Estados terminales: el turno ya no admite cambios.
+// (Los turnos se crean como "Confirmado" y pueden reprogramarse; solo
+// "Completado" y "Cancelado" quedan cerrados.)
+const LOCKED_STATUSES: AppointmentStatus[] = ["Completado", "Cancelado"];
+
 /**
  * Valida que una fecha no sea anterior a la fecha actual
  * REGLA: No se pueden crear turnos en fechas pasadas
@@ -56,20 +61,20 @@ export function validateDateRange(dateFrom: Date, dateTo: Date): ValidationResul
 
 /**
  * Valida si un turno puede ser editado
- * REGLA: No se pueden editar turnos confirmados o completados
+ * REGLA: No se pueden editar turnos completados ni cancelados
  */
 export function canEditAppointment(appointment: Appointment): ValidationResult {
-  if (appointment.status === "completed") {
+  if (appointment.status === "Completado") {
     return {
       isValid: false,
       error: "No se puede editar un turno completado."
     };
   }
 
-  if (appointment.status === "confirmed") {
+  if (appointment.status === "Cancelado") {
     return {
       isValid: false,
-      error: "No se puede editar un turno confirmado. Debe cambiar el estado primero."
+      error: "No se puede editar un turno cancelado."
     };
   }
 
@@ -77,13 +82,20 @@ export function canEditAppointment(appointment: Appointment): ValidationResult {
 }
 
 /**
- * Valida si un turno puede ser eliminado
+ * Valida si un turno puede ser eliminado/cancelado
  */
 export function canDeleteAppointment(appointment: Appointment): ValidationResult {
-  if (appointment.status === "completed") {
+  if (appointment.status === "Completado") {
     return {
       isValid: false,
       error: "No se puede eliminar un turno completado."
+    };
+  }
+
+  if (appointment.status === "Cancelado") {
+    return {
+      isValid: false,
+      error: "El turno ya está cancelado."
     };
   }
 
@@ -137,18 +149,18 @@ export function validateAppointmentFields(
  * Verifica si un turno está "cerrado" (no puede modificarse)
  */
 export function isAppointmentLocked(appointment: Appointment): boolean {
-  return appointment.status === "completed" || appointment.status === "confirmed";
+  return LOCKED_STATUSES.includes(appointment.status);
 }
 
 /**
  * Obtiene el mensaje de estado de un turno cerrado
  */
 export function getLockedAppointmentMessage(appointment: Appointment): string {
-  if (appointment.status === "completed") {
+  if (appointment.status === "Completado") {
     return "Turno Completado - Solo Lectura";
   }
-  if (appointment.status === "confirmed") {
-    return "Turno Confirmado - Solo Lectura";
+  if (appointment.status === "Cancelado") {
+    return "Turno Cancelado - Solo Lectura";
   }
   return "";
 }

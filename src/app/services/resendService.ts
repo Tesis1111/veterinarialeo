@@ -1,5 +1,5 @@
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { auth, db } from '../firebase/config';
 
 interface EmailLogData {
   to: string;
@@ -13,9 +13,22 @@ interface EmailLogData {
  * Función interna para llamar a la API y registrar en Firestore
  */
 async function sendEmailAndLog(payload: EmailLogData) {
-  // El log en Firestore es "best effort": si falla (p. ej. reglas de seguridad
-  // o usuario no autenticado en recuperación de contraseña), NO debe hacer
-  // fallar un correo que sí se envió.
+  // En `npm run dev` (Vite) el endpoint /api no existe: no intentar enviar
+  // ni ensuciar email_logs con errores de red.
+  if (import.meta.env.DEV) {
+    console.info('[resend] Envío de email omitido en desarrollo:', payload.type, '→', payload.to);
+    return { success: true, id: null, skipped: 'dev' };
+  }
+
+  // El endpoint exige sesión de Firebase (Authorization: Bearer <idToken>).
+  const currentUser = auth?.currentUser;
+  if (!currentUser) {
+    throw new Error('Se requiere una sesión activa para enviar correos.');
+  }
+  const idToken = await currentUser.getIdToken();
+
+  // El log en Firestore es "best effort": si falla, NO debe hacer fallar un
+  // correo que sí se envió. Las reglas exigen userId == uid del autenticado.
   const log = async (estado: string, idResend: string | null, mensajeError: string | null) => {
     try {
       if (!db) return;
@@ -27,6 +40,7 @@ async function sendEmailAndLog(payload: EmailLogData) {
         estado,
         id_resend: idResend,
         mensaje_error: mensajeError,
+        userId: currentUser.uid,
       });
     } catch (e) {
       console.error('No se pudo registrar el log de email en Firebase', e);
@@ -37,7 +51,10 @@ async function sendEmailAndLog(payload: EmailLogData) {
     // 1. Llamar a nuestra Serverless Function
     const response = await fetch('/api/send-email', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`,
+      },
       body: JSON.stringify(payload),
     });
 
@@ -45,10 +62,8 @@ async function sendEmailAndLog(payload: EmailLogData) {
     try {
       result = await response.json();
     } catch {
-      // Respuesta no-JSON: típico en `npm run dev` (Vite) donde /api no existe.
       throw new Error(
-        `El endpoint /api/send-email no respondió JSON (status ${response.status}). ` +
-        'En desarrollo local use "vercel dev" o pruebe en el deploy de Vercel.'
+        `El endpoint /api/send-email no respondió JSON (status ${response.status}).`
       );
     }
 
@@ -154,18 +169,6 @@ export const sendReminder = async (
     to,
     subject: `Recordatorio: ${data.reminderType} para ${data.petName} 🔔`,
     type: 'reminder',
-    data,
-  });
-};
-
-export const sendPasswordRecovery = async (
-  to: string, 
-  data: { clientName: string; recoveryLink: string }
-) => {
-  return sendEmailAndLog({
-    to,
-    subject: 'Recuperación de Contraseña 🔒',
-    type: 'password_recovery',
     data,
   });
 };

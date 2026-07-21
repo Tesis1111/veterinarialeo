@@ -19,6 +19,7 @@ import {
   Shield,
   Stethoscope,
   UserCheck,
+  Scissors,
   BarChart2,
 } from "lucide-react";
 import { useState, useEffect } from "react";
@@ -44,7 +45,7 @@ import { traerTurnos } from "../services/turnoService";
 import { suscribirTiposServicio } from "../services/parametrosService";
 import { ROLE_META } from "../services/userService";
 import { FIREBASE_CONFIGURED, db } from "../firebase/config";
-import { onSnapshot, collection, query, where, Timestamp } from "firebase/firestore";
+import { onSnapshot, collection, query, where, orderBy, limit, Timestamp } from "firebase/firestore";
 
 type ActiveModule =
   | "dashboard"
@@ -62,7 +63,7 @@ interface DashboardProps {
 export default function Dashboard({
   setActiveModule,
 }: DashboardProps) {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, hasPermission } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [pets, setPets] = useState<Pet[]>([]);
   const [medicalRecords, setMedicalRecords] = useState<
@@ -85,23 +86,31 @@ export default function Dashboard({
 
   useEffect(() => {
     if (FIREBASE_CONFIGURED && db) {
+      // Clientes/mascotas completos (colecciones chicas): se comparten con el
+      // ReportsModule embebido, que necesita también los dados de baja para
+      // resolver nombres y para el alcance "inactivos".
       const unsubClients = onSnapshot(
-        query(collection(db, "clientes"), where("deleted", "==", false)),
+        collection(db, "clientes"),
         (snap) => setClients(snap.docs.map(d => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt instanceof Timestamp ? d.data().createdAt.toDate() : new Date() } as any))),
-        () => traerClientes().then(setClients).catch(() => setClients([]))
+        () => traerClientes(true).then(setClients).catch(() => setClients([]))
       );
       const unsubPets = onSnapshot(
-        query(collection(db, "mascotas"), where("deleted", "==", false)),
+        collection(db, "mascotas"),
         (snap) => setPets(snap.docs.map(d => ({ id: d.id, ...d.data(), deceased: d.data().deceased ?? false } as any))),
         () => traerMascotas().then(setPets).catch(() => setPets([]))
       );
+      // Historiales: solo los 50 más recientes (el Dashboard muestra 5)
       const unsubMedical = onSnapshot(
-        query(collection(db, "historiales"), where("deleted", "==", false)),
+        query(collection(db, "historiales"), where("deleted", "==", false), orderBy("date", "desc"), limit(50)),
         (snap) => setMedicalRecords(snap.docs.map(d => ({ id: d.id, ...d.data(), date: d.data().date instanceof Timestamp ? d.data().date.toDate() : new Date(d.data().date || d.data().fecha) } as any))),
         () => traerTodosLosHistoriales().then(setMedicalRecords).catch(() => setMedicalRecords([]))
       );
+      // Turnos: ventana [ayer, +31 días) — cubre "hoy" y "próximos" sin
+      // descargar el histórico completo (rango de un solo campo, sin índice).
+      const rangeStart = new Date(); rangeStart.setDate(rangeStart.getDate() - 1); rangeStart.setHours(0, 0, 0, 0);
+      const rangeEnd = new Date(); rangeEnd.setDate(rangeEnd.getDate() + 31); rangeEnd.setHours(0, 0, 0, 0);
       const unsubAppts = onSnapshot(
-        query(collection(db, "turnos")),
+        query(collection(db, "turnos"), where("date", ">=", rangeStart), where("date", "<", rangeEnd)),
         (snap) => setAppointments(snap.docs.filter(d => d.data().deleted !== true).map(d => {
           const data = d.data();
           const rawTs = data.date;
@@ -176,7 +185,7 @@ export default function Dashboard({
     {
       key: "showTotalClients",
       title: "Total Clientes",
-      value: clients.length,
+      value: clients.filter(c => !(c as any).deleted).length,
       icon: Users,
       color: "from-orange-500 to-orange-600",
       bgColor: "bg-orange-50",
@@ -189,7 +198,7 @@ export default function Dashboard({
     {
       key: "showTotalPets",
       title: "Total Mascotas",
-      value: pets.length,
+      value: pets.filter(p => !(p as any).deleted).length,
       icon: PawPrint,
       color: "from-amber-500 to-amber-600",
       bgColor: "bg-amber-50",
@@ -226,6 +235,7 @@ export default function Dashboard({
                 {user.roleName === "admin" && <Shield className="h-3 w-3" />}
                 {user.roleName === "veterinario" && <Stethoscope className="h-3 w-3" />}
                 {user.roleName === "recepcionista" && <UserCheck className="h-3 w-3" />}
+                {user.roleName === "peluquero" && <Scissors className="h-3 w-3" />}
                 {ROLE_META[user.roleName].displayName}
               </span>
             )}
@@ -515,9 +525,11 @@ export default function Dashboard({
           </CardHeader>
           <CardContent className="pt-4 md:pt-6 p-4 md:p-6">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-3">
+              {/* Solo roles con permiso de gestión (admin/recepcionista); el
+                  veterinario/peluquero navega desde las stat cards a la lista */}
               <Button
                 onClick={() => {
-                  localStorage.setItem("clients_initial_tab", "new");
+                  if (hasPermission("manage_clients")) localStorage.setItem("clients_initial_tab", "new");
                   setActiveModule("clients");
                 }}
                 variant="outline"
@@ -525,12 +537,12 @@ export default function Dashboard({
               >
                 <Users className="h-5 w-5 md:h-6 md:w-6 text-orange-600" />
                 <span className="text-center">
-                  Registrar Cliente
+                  {hasPermission("manage_clients") ? "Registrar Cliente" : "Ver Clientes"}
                 </span>
               </Button>
               <Button
                 onClick={() => {
-                  localStorage.setItem("pets_initial_tab", "new");
+                  if (hasPermission("manage_pets")) localStorage.setItem("pets_initial_tab", "new");
                   setActiveModule("pets");
                 }}
                 variant="outline"
@@ -538,7 +550,7 @@ export default function Dashboard({
               >
                 <PawPrint className="h-5 w-5 md:h-6 md:w-6 text-orange-600" />
                 <span className="text-center">
-                  Registrar Mascota
+                  {hasPermission("manage_pets") ? "Registrar Mascota" : "Ver Mascotas"}
                 </span>
               </Button>
               <Button
@@ -589,10 +601,14 @@ export default function Dashboard({
         </Card>
       )}
 
-      {/* Embedded Reports Module */}
-      <div className="pt-4 border-t border-orange-200 mt-6">
-        <ReportsModule />
-      </div>
+      {/* Embedded Reports Module — mismo criterio que la ruta protegida
+          (AdminGuard requiredRole="veterinario" en App.tsx). Se le pasan los
+          clientes/mascotas ya suscritos para no duplicar listeners. */}
+      {(user?.roleName === "admin" || user?.roleName === "veterinario") && (
+        <div className="pt-4 border-t border-orange-200 mt-6">
+          <ReportsModule externalClients={clients} externalPets={pets} />
+        </div>
+      )}
     </div>
   );
 }

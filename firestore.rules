@@ -98,11 +98,27 @@ service cloud.firestore {
     }
 
     // ── /turnos ───────────────────────────────────────────
-    // Admin + recepcionista + veterinario + peluquero: R/W
+    // Admin + recepcionista + veterinario + peluquero: crear/actualizar
     // (All authenticated staff can manage appointments)
+    // Borrado físico: solo admin (la cancelación es un update de status).
     match /turnos/{docId} {
       allow read:   if isAuthenticated();
-      allow write:  if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    // ── /slots ────────────────────────────────────────────
+    // Lock de unicidad de horario por profesional. ID determinista:
+    // {doctorId}_{YYYY-MM-DD}_{HH:mm}. Se crea en el MISMO writeBatch que el
+    // turno; `update: if false` hace que un batch.set sobre un slot existente
+    // falle (Firestore lo evalúa como update) y aborte el batch entero →
+    // imposible la doble reserva, sin Cloud Functions.
+    match /slots/{slotId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if false;
+      allow delete: if isAuthenticated();
     }
 
     // ── /horarios ─────────────────────────────────────────
@@ -115,11 +131,12 @@ service cloud.firestore {
 
     // ── /auditoria ────────────────────────────────────────
     // Admin: read-only (audit logs should not be modified)
-    // All writes must come from authenticated server-side operations
-    // For client-side writes (demo mode), allow only authenticated users to create
+    // Crear: solo con el userId del propio autenticado (no se puede
+    // suplantar a otro usuario en el log). Append-only.
     match /auditoria/{docId} {
       allow read:   if isAdmin();
-      allow create: if isAuthenticated();
+      allow create: if isAuthenticated()
+                    && request.resource.data.userId == request.auth.uid;
       allow update: if false;
       allow delete: if false;
     }
@@ -179,11 +196,12 @@ service cloud.firestore {
 
     // ── /email_logs ───────────────────────────────────────
     // Log de correos enviados vía Resend (resendService.ts).
-    // Crear: cualquier usuario autenticado. Leer: solo admin.
+    // Crear: solo con el userId del propio autenticado. Leer: solo admin.
     // Nunca se modifican ni se borran (integridad del log).
     match /email_logs/{docId} {
       allow read:   if isAdmin();
-      allow create: if isAuthenticated();
+      allow create: if isAuthenticated()
+                    && request.resource.data.userId == request.auth.uid;
       allow update: if false;
       allow delete: if false;
     }

@@ -1,0 +1,9 @@
+{
+  "name": "veterinarialeo-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Scripts de administración/migración (usar solo localmente, requieren service account)",
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  }
+}

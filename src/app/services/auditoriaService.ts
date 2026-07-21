@@ -15,7 +15,7 @@ import {
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
-import { db, FIREBASE_CONFIGURED } from "../firebase/config";
+import { auth, db, FIREBASE_CONFIGURED } from "../firebase/config";
 import { AuditLog } from "../types";
 
 const COL = "auditoria";
@@ -86,7 +86,6 @@ export async function audit(entry: AuditEntry): Promise<void> {
       oldValues: entry.oldValues,
       newValues: entry.newValues,
       details: entry.details,
-      ipAddress: "127.0.0.1",
       userAgent: getUserAgent(),
     });
   } catch {
@@ -109,7 +108,7 @@ function toLog(id: string, data: Record<string, any>): AuditLog {
     oldValues: data.oldValues,
     newValues: data.newValues,
     details: data.details,
-    ipAddress: data.ipAddress ?? "127.0.0.1",
+    ipAddress: data.ipAddress ?? "",
     userAgent: data.userAgent,
     sessionId: data.sessionId,
     timestamp: (data.timestamp as Timestamp)?.toDate() ?? new Date(),
@@ -144,6 +143,10 @@ export async function registrarAuditoria(
     for (const [k, v] of Object.entries(log)) {
       if (v !== undefined) clean[k] = v;
     }
+    // Las reglas exigen userId == uid autenticado: el payload no puede
+    // suplantar a otro usuario aunque el caller pase un id distinto.
+    const uid = auth?.currentUser?.uid;
+    if (uid) clean.userId = uid;
     const payload = { ...clean, timestamp: serverTimestamp() };
     const ref = await addDoc(collection(db, COL), payload);
     return { id: ref.id, ...log, timestamp: new Date() };

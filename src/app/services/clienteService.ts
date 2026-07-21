@@ -19,6 +19,14 @@ import {
 import { db } from "../firebase/config";
 import { Client, ClientFormData, FormValidationResult } from "../types";
 import { audit } from "./auditoriaService";
+import {
+  commitInChunks,
+  opsCascadaSoftCliente,
+  opsCascadaFisicaCliente,
+  contarDependenciasCliente,
+} from "./cascadeHelpers";
+
+export { contarDependenciasCliente };
 
 const COL = "clientes";
 
@@ -91,13 +99,23 @@ export async function asociarCliente(id: string, data: Partial<ClientFormData>, 
   return updated;
 }
 
-/** Baja lógica (soft-delete): el cliente queda en la base pero oculto por defecto. Reversible. */
+/**
+ * Baja lógica (soft-delete) EN CASCADA: marca deleted al cliente y a sus
+ * mascotas, y cancela sus turnos vigentes (liberando los slots). Reversible
+ * para cliente/mascotas (reactivar); los turnos cancelados no se restauran.
+ */
 export async function eliminarCliente(id: string, deletedBy: string): Promise<void> {
   requireDb("eliminarCliente");
-  await updateDoc(doc(db!, COL, id), { deleted: true, deletedBy, deletedAt: serverTimestamp() });
+  const ops = await opsCascadaSoftCliente(id, deletedBy);
+  ops.unshift({
+    type: "update",
+    ref: doc(db!, COL, id),
+    data: { deleted: true, deletedBy, deletedAt: serverTimestamp() },
+  });
+  await commitInChunks(ops);
   await audit({
     action: "DELETE", module: "clients", entityType: "cliente", entityId: id,
-    details: `Dio de baja (lógica) al cliente ${id}`,
+    details: `Dio de baja (lógica) al cliente ${id} y sus mascotas/turnos asociados`,
   });
 }
 
@@ -111,22 +129,30 @@ export async function reactivarCliente(id: string, updatedBy: string): Promise<v
   });
 }
 
-/** Borrado FÍSICO: elimina el documento de Firestore de forma permanente e irreversible. */
+/**
+ * Borrado FÍSICO EN CASCADA: elimina permanentemente al cliente junto con sus
+ * mascotas, historiales, turnos y slots asociados. Irreversible.
+ * (El delete de turnos requiere rol admin según firestore.rules.)
+ */
 export async function eliminarClienteFisico(id: string): Promise<void> {
   requireDb("eliminarClienteFisico");
-  await deleteDoc(doc(db!, COL, id));
+  const ops = await opsCascadaFisicaCliente(id);
+  ops.push({ type: "delete", ref: doc(db!, COL, id) });
+  await commitInChunks(ops);
   await audit({
     action: "DELETE", module: "clients", entityType: "cliente", entityId: id,
-    details: `Eliminó FÍSICAMENTE al cliente ${id}`,
+    details: `Eliminó FÍSICAMENTE al cliente ${id} con sus mascotas, historiales y turnos`,
   });
 }
 
 export async function traerClientes(includeDeleted = false): Promise<Client[]> {
   requireDb("traerClientes");
-  // Fetch all and filter client-side to avoid composite index issues
-  const snap = await getDocs(collection(db!, COL));
-  const all = snap.docs.map((d) => toClient(d.id, d.data()));
-  return includeDeleted ? all : all.filter(c => !c.deleted);
+  // Filtro server-side (where de un solo campo, sin índice compuesto)
+  const q = includeDeleted
+    ? collection(db!, COL)
+    : query(collection(db!, COL), where("deleted", "==", false));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => toClient(d.id, d.data()));
 }
 
 export async function traerClientePorId(id: string): Promise<Client | null> {

@@ -99,6 +99,7 @@ export async function registrarHistorial(
   clientNameAtTime?: string,
   attachments: MedicalAttachment[] = []
 ): Promise<MedicalRecord> {
+  requireDb("registrarHistorial");
   const payload = {
     ...data,
     date: data.date ? new Date(data.date) : new Date(),
@@ -111,16 +112,14 @@ export async function registrarHistorial(
     createdAt: serverTimestamp(),
   };
 
-  if (db) {
-    const ref = await addDoc(collection(db!, COL), payload);
-    // El eventType distingue registro de vacuna / peluquería / guardería / consulta.
-    await audit({
-      action: "CREATE", module: "medical_records", entityType: "historia_clinica", entityId: ref.id,
-      details: `Registró "${data.eventType ?? "historia clínica"}" para la mascota ${data.petId}`,
-      newValues: { petId: data.petId, eventType: data.eventType, professionalId: data.professionalId },
-    });
-    return { id: ref.id, ...payload, createdAt: new Date() } as MedicalRecord;
-  }
+  const ref = await addDoc(collection(db!, COL), payload);
+  // El eventType distingue registro de vacuna / peluquería / guardería / consulta.
+  await audit({
+    action: "CREATE", module: "medical_records", entityType: "historia_clinica", entityId: ref.id,
+    details: `Registró "${data.eventType ?? "historia clínica"}" para la mascota ${data.petId}`,
+    newValues: { petId: data.petId, eventType: data.eventType, professionalId: data.professionalId },
+  });
+  return { id: ref.id, ...payload, createdAt: new Date() } as MedicalRecord;
 }
 
 /**
@@ -224,7 +223,6 @@ export async function eliminarHistorial(id: string, deletedBy: string): Promise<
 
 export async function traerHistorialPorId(id: string): Promise<MedicalRecord | null> {
   requireDb("traerHistorialPorId");
-  const { getDoc } = await import("firebase/firestore");
   const snap = await getDoc(doc(db!, COL, id));
   return snap.exists() ? toRecord(snap.id, snap.data()) : null;
 }

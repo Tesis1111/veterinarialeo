@@ -11,11 +11,10 @@ import {
   doc,
   getDoc,
   getDocs,
-  addDoc,
   updateDoc,
+  writeBatch,
   query,
   where,
-  orderBy,
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
@@ -24,6 +23,42 @@ import { Appointment, AppointmentFormData, DoctorSchedule, FormValidationResult,
 import { audit } from "./auditoriaService";
 
 const COL = "turnos";
+const SLOTS_COL = "slots";
+
+// ── Slots (unicidad de horario por profesional) ─────────────────────────────
+
+/** ID determinista del lock de slot: {doctorId}_{YYYY-MM-DD}_{HH:mm}. */
+export function slotIdFor(doctorId: string, dateStr: string, startTime: string): string {
+  return `${doctorId}_${dateStr}_${startTime}`;
+}
+
+/** Fecha local como "YYYY-MM-DD" (sin desfase UTC). */
+export function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** ¿Este turno reserva un slot de agenda del profesional? */
+function needsSlot(t: { type?: string; doctorId?: string | null; startTime?: string | null; status?: string }): boolean {
+  return t.type !== "daycare" &&
+    Boolean(t.doctorId) &&
+    Boolean(t.startTime) &&
+    ["Programado", "Confirmado"].includes(t.status ?? "Confirmado");
+}
+
+/** Error de dominio: el horario ya está reservado (perdió la carrera del slot). */
+export class SlotOcupadoError extends Error {
+  constructor() {
+    super("El profesional ya tiene un turno en ese horario. Elegí otro horario.");
+    this.name = "SlotOcupadoError";
+  }
+}
+
+/** Suma 30 minutos a "HH:mm" con acarreo de hora y cero a la izquierda. */
+export function calcEndTime(start: string, durationMin = 30): string {
+  const [h, m] = start.split(":").map(Number);
+  const t = h * 60 + m + durationMin;
+  return `${String(Math.floor(t / 60) % 24).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+}
 
 // ── Conversion ──────────────────────────────────────────────────────────────
 
@@ -38,6 +73,11 @@ function toAppointment(id: string, data: Record<string, any>): Appointment {
     startTime: data.startTime ?? "",
     endTime: data.endTime ?? "",
     status: data.status ?? "Programado",
+    type: data.type,
+    deleted: data.deleted ?? false,
+    tiposEvento: data.tiposEvento,
+    dateFrom: (data.dateFrom as Timestamp)?.toDate?.() ?? data.dateFrom,
+    dateTo: (data.dateTo as Timestamp)?.toDate?.() ?? data.dateTo,
     reason: data.reason,
     notes: data.notes,
     cancellationReason: data.cancellationReason,
@@ -134,19 +174,24 @@ export async function validarDuplicados(
   const errors = [];
 
   if (!db) { return { valid: true, errors: [] }; }
-  // Fetch all for this pet and filter client-side to avoid composite index
+  // Query server-side por mascota + rango del día (índice compuesto petId+date)
   const [vy, vm, vd] = date.split("-").map(Number);
   const targetDate = new Date(vy, vm - 1, vd);
+  targetDate.setHours(0, 0, 0, 0);
+  const nextDay = new Date(targetDate);
+  nextDay.setDate(targetDate.getDate() + 1);
 
-  const snap = await getDocs(query(collection(db!, COL), where("petId", "==", petId)));
+  const snap = await getDocs(query(
+    collection(db!, COL),
+    where("petId", "==", petId),
+    where("date", ">=", targetDate),
+    where("date", "<", nextDay)
+  ));
   const conflict = snap.docs.find(d => {
     const a = d.data();
-    const aDate = a.date?.toDate ? a.date.toDate() : new Date(a.date);
-    aDate.setHours(0, 0, 0, 0);
     return d.id !== excludeId &&
       a.startTime === startTime &&
-      ["Programado", "Confirmado"].includes(a.status ?? "") &&
-      aDate.getTime() === targetDate.getTime();
+      ["Programado", "Confirmado"].includes(a.status ?? "");
   });
   if (conflict) {
     errors.push({ field: "petId", message: "Ya existe un turno para esta mascota en ese horario." });
@@ -301,31 +346,104 @@ function requireDb(op: string) {
   if (!db) throw new Error(`[turnoService] Firebase no configurado. Operación: ${op}`);
 }
 
-export async function registrarTurno(data: AppointmentFormData, createdBy: string): Promise<Appointment> {
-  requireDb("registrarTurno");
-  // Accept Date object or "YYYY-MM-DD" string; always convert to local midnight
+/** Normaliza Date u "YYYY-MM-DD" a medianoche local. */
+function toLocalMidnight(date: Date | string): Date {
   let dateObj: Date;
-  if (data.date instanceof Date) {
-    dateObj = new Date(data.date);
+  if (date instanceof Date) {
+    dateObj = new Date(date);
   } else {
-    const [ty, tm, td] = String(data.date).split("-").map(Number);
+    const [ty, tm, td] = String(date).split("-").map(Number);
     dateObj = new Date(ty, tm - 1, td);
   }
   dateObj.setHours(0, 0, 0, 0);
+  return dateObj;
+}
+
+/** Traduce el permission-denied del batch de slot a un error de dominio. */
+function mapSlotError(err: any): never {
+  // El update del turno propio siempre está permitido para staff autenticado;
+  // en el batch con slot, permission-denied solo puede venir del set sobre un
+  // slot existente (rules: update de /slots prohibido) → horario ocupado.
+  if (err?.code === "permission-denied") throw new SlotOcupadoError();
+  throw err;
+}
+
+export async function registrarTurno(data: AppointmentFormData & Record<string, any>, createdBy: string): Promise<Appointment> {
+  requireDb("registrarTurno");
+  const dateObj = toLocalMidnight(data.date);
   const payload = { ...data, date: dateObj, deleted: false, createdBy, createdAt: serverTimestamp() };
-  const ref = await addDoc(collection(db!, COL), payload);
+  const turnoRef = doc(collection(db!, COL));
+
+  if (needsSlot({ ...data, status: (data as any).status })) {
+    const slotId = slotIdFor(data.doctorId!, toDateStr(dateObj), data.startTime!);
+    const batch = writeBatch(db!);
+    batch.set(doc(db!, SLOTS_COL, slotId), {
+      turnoId: turnoRef.id,
+      doctorId: data.doctorId,
+      date: dateObj,
+      startTime: data.startTime,
+      createdBy,
+      createdAt: serverTimestamp(),
+    });
+    batch.set(turnoRef, payload);
+    await batch.commit().catch(mapSlotError);
+  } else {
+    const batch = writeBatch(db!);
+    batch.set(turnoRef, payload);
+    await batch.commit();
+  }
+
   await audit({
-    action: "CREATE", module: "appointments", entityType: "turno", entityId: ref.id,
+    action: "CREATE", module: "appointments", entityType: "turno", entityId: turnoRef.id,
     details: `Registró un turno para el ${dateObj.toLocaleDateString("es-AR")} ${data.startTime ?? ""}`,
     newValues: { clientId: data.clientId, petId: data.petId, doctorId: data.doctorId, date: dateObj.toISOString() },
   });
-  return { id: ref.id, ...data, date: dateObj, createdBy, createdAt: new Date() } as Appointment;
+  return { id: turnoRef.id, ...data, date: dateObj, createdBy, createdAt: new Date() } as Appointment;
 }
 
-export async function modificarTurno(id: string, data: Partial<AppointmentFormData>, updatedBy: string): Promise<Appointment> {
+export async function modificarTurno(id: string, data: Partial<AppointmentFormData> & Record<string, any>, updatedBy: string): Promise<Appointment> {
   requireDb("modificarTurno");
   const ref = doc(db!, COL, id);
-  await updateDoc(ref, { ...data, updatedBy, updatedAt: serverTimestamp() });
+  const prevSnap = await getDoc(ref);
+  const prev = prevSnap.exists() ? toAppointment(id, prevSnap.data() as Record<string, any>) : null;
+
+  const updatePayload: Record<string, any> = { ...data, updatedBy, updatedAt: serverTimestamp() };
+  if (data.date !== undefined) updatePayload.date = toLocalMidnight(data.date as Date | string);
+
+  // Slot viejo y nuevo según el estado resultante del merge
+  const merged = {
+    type: data.type ?? prev?.type,
+    doctorId: (data.doctorId ?? prev?.doctorId) as string | undefined,
+    startTime: (data.startTime ?? prev?.startTime) as string | undefined,
+    status: (data as any).status ?? prev?.status,
+  };
+  const mergedDate: Date = updatePayload.date ?? (prev?.date as Date) ?? new Date();
+  const oldSlotId = prev && needsSlot(prev)
+    ? slotIdFor(prev.doctorId!, toDateStr(new Date(prev.date)), prev.startTime!)
+    : null;
+  const newSlotId = needsSlot(merged)
+    ? slotIdFor(merged.doctorId!, toDateStr(mergedDate), merged.startTime!)
+    : null;
+
+  if (newSlotId !== oldSlotId) {
+    const batch = writeBatch(db!);
+    if (newSlotId) {
+      batch.set(doc(db!, SLOTS_COL, newSlotId), {
+        turnoId: id,
+        doctorId: merged.doctorId,
+        date: mergedDate,
+        startTime: merged.startTime,
+        createdBy: updatedBy,
+        createdAt: serverTimestamp(),
+      });
+    }
+    if (oldSlotId) batch.delete(doc(db!, SLOTS_COL, oldSlotId));
+    batch.update(ref, updatePayload);
+    await batch.commit().catch(mapSlotError);
+  } else {
+    await updateDoc(ref, updatePayload);
+  }
+
   const snap = await getDoc(ref);
   const updated = toAppointment(id, snap.data() as Record<string, any>);
   // Distingue reprogramación / confirmación / modificación genérica.
@@ -341,22 +459,43 @@ export async function modificarTurno(id: string, data: Partial<AppointmentFormDa
 
 export async function cancelarTurno(id: string, reason: string, updatedBy: string): Promise<void> {
   requireDb("cancelarTurno");
-  await updateDoc(doc(db!, COL, id), {
+  const ref = doc(db!, COL, id);
+  const prevSnap = await getDoc(ref);
+  const prev = prevSnap.exists() ? toAppointment(id, prevSnap.data() as Record<string, any>) : null;
+
+  const batch = writeBatch(db!);
+  batch.update(ref, {
     status: "Cancelado", cancellationReason: reason,
     cancelledAt: serverTimestamp(), updatedBy, updatedAt: serverTimestamp(),
   });
+  // Libera el slot del profesional (delete idempotente: no falla si no existe)
+  if (prev && needsSlot(prev)) {
+    batch.delete(doc(db!, SLOTS_COL, slotIdFor(prev.doctorId!, toDateStr(new Date(prev.date)), prev.startTime!)));
+  }
+  await batch.commit();
+
   await audit({
     action: "UPDATE", module: "appointments", entityType: "turno", entityId: id,
     details: `Canceló el turno ${id}`, newValues: { status: "Cancelado", cancellationReason: reason },
   });
 }
 
-export async function traerTurnos(filters?: { clientId?: string; petId?: string }): Promise<Appointment[]> {
+export async function traerTurnos(filters?: { clientId?: string; petId?: string; from?: Date; to?: Date }): Promise<Appointment[]> {
   requireDb("traerTurnos");
-  // Fetch all client-side to avoid composite index requirements
-  const snap = await getDocs(collection(db!, COL));
+  // Filtros server-side: petId/clientId son where de campo único; el rango de
+  // fecha se combina solo con petId (índice compuesto petId+date).
+  const constraints = [];
+  if (filters?.petId) constraints.push(where("petId", "==", filters.petId));
+  else if (filters?.clientId) constraints.push(where("clientId", "==", filters.clientId));
+  if (filters?.from && !filters?.clientId) constraints.push(where("date", ">=", filters.from));
+  if (filters?.to && !filters?.clientId) constraints.push(where("date", "<", filters.to));
+
+  const snap = await getDocs(constraints.length ? query(collection(db!, COL), ...constraints) : collection(db!, COL));
   let appts = snap.docs.map(d => toAppointment(d.id, d.data()));
-  if (filters?.clientId) appts = appts.filter(a => a.clientId === filters.clientId);
-  if (filters?.petId) appts = appts.filter(a => a.petId === filters.petId);
+  if (filters?.clientId) {
+    appts = appts.filter(a => a.clientId === filters.clientId);
+    if (filters.from) appts = appts.filter(a => new Date(a.date) >= filters.from!);
+    if (filters.to) appts = appts.filter(a => new Date(a.date) < filters.to!);
+  }
   return appts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }

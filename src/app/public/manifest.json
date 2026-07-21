@@ -1,6 +1,6 @@
 {
-  "name": "VetCare - Sistema de Gestión Veterinaria",
-  "short_name": "VetCare",
+  "name": "Veterinaria Leo - Sistema de Gestión",
+  "short_name": "Vet Leo",
   "description": "Sistema completo de gestión veterinaria con módulos de clientes, mascotas, atención médica, turnos y auditoría",
   "start_url": "/",
   "display": "standalone",
@@ -56,20 +56,6 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
-    }
-  ],
-  "screenshots": [
-    {
-      "src": "/screenshots/screenshot-1.png",
-      "sizes": "1280x720",
-      "type": "image/png",
-      "form_factor": "wide"
-    },
-    {
-      "src": "/screenshots/screenshot-2.png",
-      "sizes": "750x1334",
-      "type": "image/png",
-      "form_factor": "narrow"
     }
   ],
   "categories": ["medical", "business", "productivity"],

@@ -2,6 +2,16 @@ import { format } from "date-fns";
 
 type CellValue = string | number | null | undefined;
 
+// Escapa valores interpolados en los HTML de exportación (los datos pueden
+// contener HTML ingresado por usuarios; sin esto habría XSS almacenado).
+const esc = (s: unknown): string =>
+  String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
 // ─────────────────────────────────────────────────────────
 // PDF Export: opens a styled HTML page and triggers print()
 // ─────────────────────────────────────────────────────────
@@ -16,7 +26,7 @@ export function exportToPDF(
 
   const infoHTML = extraInfo
     ? `<div class="info-row">${Object.entries(extraInfo)
-        .map(([k, v]) => `<div class="info-item"><strong>${k}:</strong> ${v}</div>`)
+        .map(([k, v]) => `<div class="info-item"><strong>${esc(k)}:</strong> ${esc(v)}</div>`)
         .join("")}</div>`
     : "";
 
@@ -24,7 +34,7 @@ export function exportToPDF(
     .map(
       (row, i) =>
         `<tr class="${i % 2 === 0 ? "even" : "odd"}">${row
-          .map((cell) => `<td>${cell ?? "—"}</td>`)
+          .map((cell) => `<td>${cell == null ? "—" : esc(cell)}</td>`)
           .join("")}</tr>`
     )
     .join("");
@@ -33,7 +43,7 @@ export function exportToPDF(
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>${title} — VetSystem</title>
+  <title>${esc(title)} — VetSystem</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Segoe UI', Arial, sans-serif; padding: 28px 32px; color: #1f2937; background: #fff; }
@@ -59,8 +69,8 @@ export function exportToPDF(
   <div class="header">
     <div class="header-left">
       <div class="logo">🐾</div>
-      <h1>${title}</h1>
-      <h2>${subtitle}</h2>
+      <h1>${esc(title)}</h1>
+      <h2>${esc(subtitle)}</h2>
     </div>
     <div class="header-right">
       <strong>VetSystem</strong><br/>
@@ -70,7 +80,7 @@ export function exportToPDF(
   ${infoHTML}
   <table>
     <thead>
-      <tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr>
+      <tr>${headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>
     </thead>
     <tbody>
       ${rowsHTML}
@@ -102,12 +112,12 @@ export function exportToExcel(
   const title = sheetTitle || filename;
   const dateStr = format(new Date(), "dd/MM/yyyy HH:mm");
 
-  const headersHTML = headers.map((h) => `<th>${h}</th>`).join("");
+  const headersHTML = headers.map((h) => `<th>${esc(h)}</th>`).join("");
   const rowsHTML = rows
     .map(
       (row, i) =>
         `<tr style="background:${i % 2 === 0 ? "#ffffff" : "#fff7ed"}">${row
-          .map((cell) => `<td>${cell ?? ""}</td>`)
+          .map((cell) => `<td>${cell == null ? "" : esc(cell)}</td>`)
           .join("")}</tr>`
     )
     .join("");
@@ -125,7 +135,7 @@ export function exportToExcel(
   </style>
 </head>
 <body>
-  <h2>🐾 VetSystem — ${title}</h2>
+  <h2>🐾 VetSystem — ${esc(title)}</h2>
   <p>Exportado: ${dateStr} &nbsp;|&nbsp; Total: ${rows.length} registros</p>
   <table>
     <thead><tr style="background:#fff7ed">${headersHTML}</tr></thead>

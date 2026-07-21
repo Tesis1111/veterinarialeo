@@ -7,7 +7,7 @@ import { Button } from "./ui/button";
 interface AdminGuardProps {
   children: ReactNode;
   /** Minimum role required. Defaults to 'admin'. */
-  requiredRole?: "admin" | "veterinario" | "recepcionista";
+  requiredRole?: "admin" | "veterinario" | "recepcionista" | "peluquero";
   /** Custom fallback instead of the default blocked screen. */
   fallback?: ReactNode;
   /** Called when the back button is clicked on the blocked screen. */

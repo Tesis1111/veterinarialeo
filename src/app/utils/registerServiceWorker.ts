@@ -1,3 +1,5 @@
+import { toast } from "sonner";
+
 export function registerServiceWorker() {
   // Solo registrar el Service Worker en producción. En desarrollo/preview evita
   // cachear contenido obsoleto e interferir con el hot-reload de Vite.
@@ -7,8 +9,6 @@ export function registerServiceWorker() {
       navigator.serviceWorker
         .register('/sw.js')
         .then((registration) => {
-          console.log('Service Worker registrado exitosamente:', registration.scope);
-
           // Verificar actualizaciones cada hora
           setInterval(() => {
             registration.update();
@@ -20,18 +20,24 @@ export function registerServiceWorker() {
             if (newWorker) {
               newWorker.addEventListener('statechange', () => {
                 if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                  // Hay una nueva versión disponible
-                  if (confirm('¡Nueva versión disponible! ¿Deseas actualizar?')) {
-                    newWorker.postMessage({ type: 'SKIP_WAITING' });
-                    window.location.reload();
-                  }
+                  // Nueva versión disponible: toast no bloqueante con acción
+                  toast.info("Nueva versión disponible", {
+                    description: "Actualizá para obtener las últimas mejoras.",
+                    duration: Infinity,
+                    action: {
+                      label: "Actualizar",
+                      onClick: () => {
+                        newWorker.postMessage({ type: 'SKIP_WAITING' });
+                      },
+                    },
+                  });
                 }
               });
             }
           });
         })
         .catch((error) => {
-          console.log('Error al registrar Service Worker:', error);
+          console.error('Error al registrar Service Worker:', error);
         });
 
       // Recargar cuando el nuevo service worker toma control

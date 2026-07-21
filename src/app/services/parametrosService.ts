@@ -27,6 +27,7 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { db, FIREBASE_CONFIGURED } from "../firebase/config";
+import { logger } from "../utils/logger";
 import {
   EspecieParametro,
   RazaParametro,
@@ -93,7 +94,7 @@ export function suscribirEspecies(
       data.sort((a, b) => a.name.localeCompare(b.name, "es"));
       callback(data);
     }, (err) => {
-      console.error("[parametrosService] onSnapshot especies error:", err);
+      logger.warn("[parametrosService] onSnapshot especies error:", err);
       onError?.(err as Error);
       callback([]);
     });
@@ -114,7 +115,7 @@ export function suscribirRazas(
       data.sort((a, b) => a.name.localeCompare(b.name, "es"));
       callback(data);
     }, (err) => {
-      console.error("[parametrosService] onSnapshot razas error:", err);
+      logger.warn("[parametrosService] onSnapshot razas error:", err);
       onError?.(err as Error);
       callback([]);
     });
@@ -134,7 +135,7 @@ export function suscribirTiposEvento(
       data.sort((a, b) => a.name.localeCompare(b.name, "es"));
       callback(data);
     }, (err) => {
-      console.error("[parametrosService] onSnapshot tiposEvento error:", err);
+      logger.warn("[parametrosService] onSnapshot tiposEvento error:", err);
       onError?.(err as Error);
       callback([]);
     });
@@ -154,7 +155,7 @@ export function suscribirVacunas(
       data.sort((a, b) => a.nombreVacuna.localeCompare(b.nombreVacuna, "es"));
       callback(data);
     }, (err) => {
-      console.error("[parametrosService] onSnapshot vacunas error:", err);
+      logger.warn("[parametrosService] onSnapshot vacunas error:", err);
       onError?.(err as Error);
       callback([]);
     });
@@ -174,7 +175,7 @@ export async function traerEspecies(): Promise<EspecieParametro[]> {
       const data = snap.docs.map(d => toEspecie(d.id, d.data()));
       return data.sort((a, b) => a.name.localeCompare(b.name, "es"));
     } catch (err) {
-      console.error("[parametrosService] traerEspecies error:", err);
+      logger.warn("[parametrosService] traerEspecies error:", err);
     }
   }
   return [];
@@ -187,7 +188,7 @@ export async function traerRazasPorEspecie(especieId: string): Promise<RazaParam
       const data = snap.docs.map(d => toRaza(d.id, d.data()));
       return data.sort((a, b) => a.name.localeCompare(b.name, "es"));
     } catch (err) {
-      console.error("[parametrosService] traerRazasPorEspecie error:", err);
+      logger.warn("[parametrosService] traerRazasPorEspecie error:", err);
     }
   }
   return [];
@@ -200,7 +201,7 @@ export async function traerTodasLasRazas(): Promise<RazaParametro[]> {
       const data = snap.docs.map(d => toRaza(d.id, d.data()));
       return data.sort((a, b) => a.name.localeCompare(b.name, "es"));
     } catch (err) {
-      console.error("[parametrosService] traerTodasLasRazas error:", err);
+      logger.warn("[parametrosService] traerTodasLasRazas error:", err);
     }
   }
   return [];
@@ -213,7 +214,7 @@ export async function traerTiposEvento(): Promise<TipoEvento[]> {
       const data = snap.docs.map(d => toTipo(d.id, d.data()));
       return data.sort((a, b) => a.name.localeCompare(b.name, "es"));
     } catch (err) {
-      console.error("[parametrosService] traerTiposEvento error:", err);
+      logger.warn("[parametrosService] traerTiposEvento error:", err);
     }
   }
   return [];
@@ -226,7 +227,7 @@ export async function traerVacunasPorEspecie(especieId: string): Promise<VacunaP
       const data = snap.docs.map(d => toVacuna(d.id, d.data()));
       return data.sort((a, b) => a.nombreVacuna.localeCompare(b.nombreVacuna, "es"));
     } catch (err) {
-      console.error("[parametrosService] traerVacunasPorEspecie error:", err);
+      logger.warn("[parametrosService] traerVacunasPorEspecie error:", err);
     }
   }
   return [];
@@ -239,7 +240,7 @@ export async function traerTodasLasVacunas(): Promise<VacunaParametro[]> {
       const data = snap.docs.map(d => toVacuna(d.id, d.data()));
       return data.sort((a, b) => a.nombreVacuna.localeCompare(b.nombreVacuna, "es"));
     } catch (err) {
-      console.error("[parametrosService] traerTodasLasVacunas error:", err);
+      logger.warn("[parametrosService] traerTodasLasVacunas error:", err);
     }
   }
   return [];
@@ -339,7 +340,7 @@ export function suscribirProfesiones(
       data.sort((a, b) => a.name.localeCompare(b.name, "es"));
       callback(data);
     }, (err) => {
-      console.error("[parametrosService] onSnapshot profesiones error:", err);
+      logger.warn("[parametrosService] onSnapshot profesiones error:", err);
       onError?.(err as Error);
       callback([]);
     });
@@ -397,7 +398,7 @@ export function suscribirTiposServicio(
       data.sort((a, b) => a.name.localeCompare(b.name, "es"));
       callback(data);
     }, (err) => {
-      console.error("[parametrosService] onSnapshot tiposServicio error:", err);
+      logger.warn("[parametrosService] onSnapshot tiposServicio error:", err);
       onError?.(err as Error);
       callback([]);
     });

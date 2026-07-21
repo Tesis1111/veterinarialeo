@@ -20,10 +20,9 @@ import {
   getDocs,
   updateDoc,
   setDoc,
-  deleteDoc,
+  writeBatch,
   query,
   where,
-  orderBy,
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
@@ -36,7 +35,7 @@ import {
 import { initializeApp, deleteApp } from "firebase/app";
 import { auth, db, app, FIREBASE_CONFIGURED } from "../firebase/config";
 import { User, UserFormData, PermissionName, FormValidationResult } from "../types";
-import { desactivarDoctorPorUserId, eliminarDoctorFisicoPorUserId, sincronizarDoctorDeUsuario } from "./doctorService";
+import { sincronizarDoctorDeUsuario } from "./doctorService";
 import { audit } from "./auditoriaService";
 
 // Import from AuthContext to avoid redefining the same map in multiple places.
@@ -109,9 +108,13 @@ export async function validarUnicidadUsuario(
       errors.push({ field: "email", message: "El correo electrónico ya está registrado." });
     }
   } catch (err: any) {
-    // If Firestore query fails (e.g., permission-denied during admin role lookup),
-    // skip the uniqueness check — Firebase Auth will enforce email uniqueness anyway.
-    console.warn("[usuarioService] validarUnicidadUsuario: Firestore query falló, omitiendo validación de unicidad:", err?.code || err?.message);
+    // Fail-closed: si no se pudo verificar, NO se asume unicidad (Firebase Auth
+    // solo garantiza emails únicos, no usernames).
+    console.warn("[usuarioService] validarUnicidadUsuario: la consulta falló:", err?.code || err?.message);
+    return {
+      valid: false,
+      errors: [{ field: "username", message: "No se pudo verificar la unicidad del usuario. Reintente." }],
+    };
   }
 
   return { valid: errors.length === 0, errors };
@@ -201,7 +204,13 @@ export async function registrarUsuario(
         licenseNumber: data.matricula,
         phone: data.phone,
         available: data.active ?? true,
-      }, createdBy).catch(() => {});
+      }, createdBy).catch((e) => {
+        console.warn("[usuarioService] El usuario se creó pero falló la sincronización del perfil profesional:", e);
+        throw new Error(
+          `El usuario "${data.fullName}" se creó, pero no se pudo crear su perfil profesional. ` +
+          "Edítelo y vuelva a guardar para reintentar."
+        );
+      });
     }
     return toUser(newUid, { ...firestoreDoc, createdAt: new Date() });
   } catch (err) {
@@ -254,7 +263,12 @@ export async function modificarUsuario(
       licenseNumber: data.matricula,
       phone: updated.phone,
       available: updated.active,
-    }, updatedBy).catch(() => {});
+    }, updatedBy).catch((e) => {
+      console.warn("[usuarioService] Falló la sincronización del perfil profesional:", e);
+      throw new Error(
+        "El usuario se actualizó, pero no se pudo sincronizar su perfil profesional. Reintente."
+      );
+    });
   }
   return updated;
 }
@@ -266,14 +280,15 @@ export async function modificarUsuario(
  */
 export async function desactivarUsuario(id: string, updatedBy: string): Promise<void> {
   requireFirebase("desactivarUsuario");
-  await updateDoc(doc(db!, COL, id), {
-    active: false,
-    updatedBy,
-    updatedAt: serverTimestamp(),
-  });
-  // Integridad usuario↔profesional: si el usuario era profesional, su perfil
-  // en /doctores queda inactivo y desaparece de todos los selectores.
-  await desactivarDoctorPorUserId(id, updatedBy).catch(() => {});
+  // Batch atómico: el usuario y su perfil profesional (si existe) se
+  // desactivan juntos — nunca queda uno activo y el otro no.
+  const doctores = await getDocs(query(collection(db!, "doctores"), where("userId", "==", id)));
+  const batch = writeBatch(db!);
+  batch.update(doc(db!, COL, id), { active: false, updatedBy, updatedAt: serverTimestamp() });
+  for (const d of doctores.docs) {
+    batch.update(d.ref, { available: false, updatedBy, updatedAt: serverTimestamp() });
+  }
+  await batch.commit();
   await audit({
     action: "UPDATE", module: "users", entityType: "usuario", entityId: id,
     details: `Inactivó al usuario ${id}`, newValues: { active: false },
@@ -301,11 +316,15 @@ export async function reactivarUsuario(id: string, updatedBy: string): Promise<v
  */
 export async function eliminarUsuarioFisico(id: string): Promise<void> {
   requireFirebase("eliminarUsuarioFisico");
-  await eliminarDoctorFisicoPorUserId(id).catch(() => {});
-  await deleteDoc(doc(db!, COL, id));
+  // Batch atómico: usuario + perfil(es) profesional(es) se borran juntos.
+  const doctores = await getDocs(query(collection(db!, "doctores"), where("userId", "==", id)));
+  const batch = writeBatch(db!);
+  for (const d of doctores.docs) batch.delete(d.ref);
+  batch.delete(doc(db!, COL, id));
+  await batch.commit();
   await audit({
     action: "DELETE", module: "users", entityType: "usuario", entityId: id,
-    details: `Eliminó FÍSICAMENTE al usuario ${id}`,
+    details: `Eliminó FÍSICAMENTE al usuario ${id} y su perfil profesional`,
   });
 }
 

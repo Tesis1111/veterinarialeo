@@ -93,16 +93,17 @@ function AppContent() {
         {activeModule === "medical" && <ErrorBoundary><MedicalHistoryModule /></ErrorBoundary>}
         {activeModule === "appointments" && <ErrorBoundary><AppointmentsModule /></ErrorBoundary>}
         {activeModule === "profile" && (
-          <UserProfile setActiveModule={setActiveModule} />
+          <ErrorBoundary><UserProfile setActiveModule={setActiveModule} /></ErrorBoundary>
         )}
 
-        {/* ── Admin-only modules ────────────────────────────────────── */}
+        {/* ── Admin-only modules — boundary DENTRO del guard, para que un
+            crash del módulo no tumbe la pantalla de acceso ───────────── */}
         {activeModule === "users" && (
           <AdminGuard
             requiredRole="admin"
             onBack={() => setActiveModule("dashboard")}
           >
-            <UsersModule />
+            <ErrorBoundary><UsersModule /></ErrorBoundary>
           </AdminGuard>
         )}
 
@@ -111,7 +112,7 @@ function AppContent() {
             requiredRole="admin"
             onBack={() => setActiveModule("dashboard")}
           >
-            <BusinessHoursModule />
+            <ErrorBoundary><BusinessHoursModule /></ErrorBoundary>
           </AdminGuard>
         )}
 
@@ -120,7 +121,7 @@ function AppContent() {
             requiredRole="admin"
             onBack={() => setActiveModule("dashboard")}
           >
-            <AuditModule />
+            <ErrorBoundary><AuditModule /></ErrorBoundary>
           </AdminGuard>
         )}
 
@@ -129,7 +130,7 @@ function AppContent() {
             requiredRole="admin"
             onBack={() => setActiveModule("dashboard")}
           >
-            <ParametrosModule />
+            <ErrorBoundary><ParametrosModule /></ErrorBoundary>
           </AdminGuard>
         )}
 
@@ -139,7 +140,7 @@ function AppContent() {
             requiredRole="veterinario"
             onBack={() => setActiveModule("dashboard")}
           >
-            <ReportsModule />
+            <ErrorBoundary><ReportsModule /></ErrorBoundary>
           </AdminGuard>
         )}
 
@@ -156,14 +157,16 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AuditProvider>
-        <UIPreferencesProvider>
-          <SuccessPopupProvider>
-            <AppContent />
-          </SuccessPopupProvider>
-        </UIPreferencesProvider>
-      </AuditProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <AuditProvider>
+          <UIPreferencesProvider>
+            <SuccessPopupProvider>
+              <AppContent />
+            </SuccessPopupProvider>
+          </UIPreferencesProvider>
+        </AuditProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }

@@ -6,7 +6,6 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { toast, Toaster } from "sonner";
-import { sendPasswordRecovery } from "../services/resendService";
 import {
   Card,
   CardContent,
@@ -104,12 +103,6 @@ export default function Login() {
       if (FIREBASE_CONFIGURED && auth) {
         // Enviar el correo oficial de Firebase (asegura el reseteo real)
         await sendPasswordResetEmail(auth, recoveryEmail.trim());
-        
-        // Opcional: Enviar también el correo formateado por Resend (Requisito de Tesis)
-        sendPasswordRecovery(recoveryEmail.trim(), {
-          clientName: "Usuario",
-          recoveryLink: "Revisa tu correo para el enlace oficial de Firebase."
-        }).catch(console.error);
 
         setRecoverySuccess(true);
         toast.success("Correo enviado", {
