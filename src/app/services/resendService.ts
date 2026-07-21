@@ -13,6 +13,26 @@ interface EmailLogData {
  * Función interna para llamar a la API y registrar en Firestore
  */
 async function sendEmailAndLog(payload: EmailLogData) {
+  // El log en Firestore es "best effort": si falla (p. ej. reglas de seguridad
+  // o usuario no autenticado en recuperación de contraseña), NO debe hacer
+  // fallar un correo que sí se envió.
+  const log = async (estado: string, idResend: string | null, mensajeError: string | null) => {
+    try {
+      if (!db) return;
+      await addDoc(collection(db, 'email_logs'), {
+        destinatario: payload.to,
+        asunto: payload.subject,
+        fecha: serverTimestamp(),
+        tipo_correo: payload.type,
+        estado,
+        id_resend: idResend,
+        mensaje_error: mensajeError,
+      });
+    } catch (e) {
+      console.error('No se pudo registrar el log de email en Firebase', e);
+    }
+  };
+
   try {
     // 1. Llamar a nuestra Serverless Function
     const response = await fetch('/api/send-email', {
@@ -21,40 +41,29 @@ async function sendEmailAndLog(payload: EmailLogData) {
       body: JSON.stringify(payload),
     });
 
-    const result = await response.json();
+    let result: any = null;
+    try {
+      result = await response.json();
+    } catch {
+      // Respuesta no-JSON: típico en `npm run dev` (Vite) donde /api no existe.
+      throw new Error(
+        `El endpoint /api/send-email no respondió JSON (status ${response.status}). ` +
+        'En desarrollo local use "vercel dev" o pruebe en el deploy de Vercel.'
+      );
+    }
 
-    // 2. Guardar log en Firestore
-    await addDoc(collection(db, 'email_logs'), {
-      destinatario: payload.to,
-      asunto: payload.subject,
-      fecha: serverTimestamp(),
-      tipo_correo: payload.type,
-      estado: response.ok ? 'enviado' : 'error',
-      id_resend: result.id || null,
-      mensaje_error: response.ok ? null : result.error || 'Error desconocido',
-    });
+    // 2. Guardar log en Firestore (no bloqueante)
+    await log(response.ok ? 'enviado' : 'error', result?.id || null,
+      response.ok ? null : result?.error || 'Error desconocido');
 
     if (!response.ok) {
-      throw new Error(result.error || 'Error al enviar el correo');
+      throw new Error(result?.error || 'Error al enviar el correo');
     }
 
     return result;
   } catch (error) {
     console.error('Error in sendEmailAndLog:', error);
-    // Registrar el fallo de red o excepción inesperada si es posible
-    try {
-      await addDoc(collection(db, 'email_logs'), {
-        destinatario: payload.to,
-        asunto: payload.subject,
-        fecha: serverTimestamp(),
-        tipo_correo: payload.type,
-        estado: 'error',
-        id_resend: null,
-        mensaje_error: error instanceof Error ? error.message : 'Excepción de red',
-      });
-    } catch (e) {
-      console.error('No se pudo registrar el error en Firebase', e);
-    }
+    await log('error', null, error instanceof Error ? error.message : 'Excepción de red');
     throw error;
   }
 }

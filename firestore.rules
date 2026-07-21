@@ -177,6 +177,17 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ── /email_logs ───────────────────────────────────────
+    // Log de correos enviados vía Resend (resendService.ts).
+    // Crear: cualquier usuario autenticado. Leer: solo admin.
+    // Nunca se modifican ni se borran (integridad del log).
+    match /email_logs/{docId} {
+      allow read:   if isAdmin();
+      allow create: if isAuthenticated();
+      allow update: if false;
+      allow delete: if false;
+    }
+
     // ── Deny everything else ──────────────────────────────
     match /{document=**} {
       allow read, write: if false;
