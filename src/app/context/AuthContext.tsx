@@ -63,6 +63,15 @@ export const ROLE_PERMISSIONS: Record<string, PermissionName[]> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// OWNER_EMAIL — dueño del sistema (bootstrap del primer administrador)
+// La primera vez que este email inicia sesión y todavía no tiene documento en
+// /usuarios, se auto-provisiona como admin. La MISMA condición está replicada en
+// firestore.rules (match /usuarios), por eso la escritura está permitida.
+// ⚠️ Si cambiás este valor, actualizá también firestore.rules.
+// ─────────────────────────────────────────────────────────────────────────────
+export const OWNER_EMAIL = "mateob7505@gmail.com";
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Context interface
 // ─────────────────────────────────────────────────────────────────────────────
 interface AuthContextType {
@@ -111,7 +120,10 @@ async function loadUserFromFirestore(fbUser: FirebaseUser): Promise<User | null>
       updatedAt: data.updatedAt?.toDate(),
       lastLogin: new Date(),
     };
-  } catch {
+  } catch (err) {
+    // DEBUG temporal: la UI muestra un mensaje genérico, pero acá queda visible
+    // la causa real (p. ej. permission-denied si las reglas no están publicadas).
+    console.error("[AuthContext] loadUserFromFirestore falló:", err);
     return null;
   }
 }
@@ -167,12 +179,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     try {
       const cred = await signInWithEmailAndPassword(auth, email, password);
-      const appUser = await loadUserFromFirestore(cred.user);
+      let appUser = await loadUserFromFirestore(cred.user);
 
       if (!appUser) {
-        // Auth succeeded but no Firestore document exists.
-        await signOut(auth);
-        return false;
+        // ── BOOTSTRAP del primer admin ──────────────────────────────────────
+        // Auth OK pero no existe documento en /usuarios. Si es el email del dueño
+        // (OWNER_EMAIL), se auto-provisiona como admin. La regla de Firestore
+        // permite esta escritura solo para ese email verificado por Auth.
+        if (db && cred.user.email?.toLowerCase() === OWNER_EMAIL.toLowerCase()) {
+          await setDoc(
+            doc(db, "usuarios", cred.user.uid),
+            {
+              uid: cred.user.uid,
+              email: cred.user.email,
+              username: (cred.user.email ?? "admin").split("@")[0],
+              fullName: cred.user.displayName ?? "Administrador",
+              roleId: "admin",
+              roleName: "admin",
+              permissions: ROLE_PERMISSIONS.admin,
+              active: true,
+              createdAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
+          appUser = await loadUserFromFirestore(cred.user);
+        }
+
+        if (!appUser) {
+          // Sigue sin documento (no es el dueño, o falló el bootstrap).
+          await signOut(auth);
+          return false;
+        }
       }
 
       if (!appUser.active) {
@@ -205,6 +242,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err: any) {
       // Firebase auth errors (wrong password, user not found, etc.) are
       // intentionally swallowed here — the UI shows a generic message.
+      // DEBUG temporal: dejamos visible el código/mensaje real en consola.
+      console.error("[AuthContext] login falló:", err?.code || err?.message || err);
       return false;
     }
   };
