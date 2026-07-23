@@ -1,12 +1,18 @@
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 
+interface EmailAttachment {
+  filename: string;
+  content: string; // base64 (con o sin prefijo data URI)
+}
+
 interface EmailLogData {
   to: string;
   subject: string;
   type: string;
   data: any;
   attachmentBase64?: string;
+  attachments?: EmailAttachment[];
 }
 
 /**
@@ -169,6 +175,36 @@ export const sendClinicalHistory = async (
     type: 'clinical_history',
     data,
     attachmentBase64: pdfBase64,
+  });
+};
+
+export const sendClinicalRecordEmail = async (
+  to: string,
+  data: {
+    clientName: string;
+    petName: string;
+    date: string;
+    eventType: string;
+    doctorName: string;
+    weight?: string;
+    temperature?: string;
+    heartRate?: string;
+    respiratoryRate?: string;
+    diagnosis?: string;
+    treatment?: string;
+    medication?: string;
+    description?: string;
+    notes?: string;
+    nextAppointmentDate?: string;
+  },
+  attachments: EmailAttachment[] = []
+) => {
+  return sendEmailAndLog({
+    to,
+    subject: `Registro clínico de ${data.petName} 📋`,
+    type: 'clinical_record',
+    data: { ...data, hasAttachments: attachments.length > 0 },
+    attachments,
   });
 };
 

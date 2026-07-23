@@ -22,9 +22,16 @@ const esc = (s: unknown): string =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+// Renderiza una fila de la caja de información solo si el valor tiene contenido.
+const infoRow = (label: string, value: unknown): string =>
+  value !== undefined && value !== null && String(value).trim() !== ''
+    ? `<p><span class="info-label">${esc(label)}</span> ${esc(value)}</p>`
+    : '';
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_SUBJECT_LEN = 200;
-const MAX_ATTACHMENT_LEN = 4 * 1024 * 1024; // ~3MB de PDF en base64
+const MAX_ATTACHMENT_LEN = 4 * 1024 * 1024; // ~3MB de PDF/imágenes en base64 (total)
+const MAX_ATTACHMENTS_COUNT = 6;
 
 // Cache de tokens verificados y rate limit por uid. Son Maps por instancia de
 // la función serverless (best-effort): reducen llamadas a Google y ponen
@@ -141,7 +148,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { to, subject, type, data = {}, attachmentBase64 } = req.body;
+    const { to, subject, type, data = {}, attachmentBase64, attachments: rawAttachments } = req.body;
 
     if (!to || !subject || !type) {
       return res.status(400).json({ error: 'Faltan campos obligatorios: to, subject, type' });
@@ -183,11 +190,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(429).json({ error: 'Demasiados correos, intente en un minuto' });
       }
     }
-    if (attachmentBase64 !== undefined &&
-        (typeof attachmentBase64 !== 'string' || attachmentBase64.length > MAX_ATTACHMENT_LEN)) {
-      return res.status(400).json({ error: 'Adjunto inválido o demasiado grande' });
-    }
-
     let htmlContent = '';
 
     switch (type) {
@@ -264,6 +266,71 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         );
         break;
 
+      case 'clinical_record':
+        htmlContent = baseTemplate(
+          'Registro de Historial Clínico',
+          `<h2>Hola ${esc(data.clientName)},</h2>
+           <p>Compartimos contigo el detalle del registro clínico de <strong>${esc(data.petName)}</strong>.</p>
+           <div class="info-box">
+             ${infoRow('🐾 Mascota:', data.petName)}
+             ${infoRow('📅 Fecha:', data.date)}
+             ${infoRow('🏥 Tipo de evento:', data.eventType)}
+             ${infoRow('👨‍⚕️ Profesional:', data.doctorName)}
+             ${infoRow('⚖️ Peso:', data.weight ? `${data.weight} kg` : '')}
+             ${infoRow('🌡️ Temperatura:', data.temperature ? `${data.temperature} °C` : '')}
+             ${infoRow('❤️ Frec. cardíaca:', data.heartRate)}
+             ${infoRow('🫁 Frec. respiratoria:', data.respiratoryRate)}
+             ${infoRow('🔬 Diagnóstico:', data.diagnosis)}
+             ${infoRow('💉 Tratamiento:', data.treatment)}
+             ${infoRow('💊 Medicación:', data.medication)}
+             ${infoRow('📝 Descripción:', data.description)}
+             ${infoRow('🗒️ Observaciones:', data.notes)}
+             ${infoRow('🔔 Próximo control:', data.nextAppointmentDate)}
+           </div>
+           ${data.hasAttachments ? '<p>📎 Adjuntamos a este correo los archivos e imágenes asociados a este registro.</p>' : ''}
+           <p>Si tienes alguna duda sobre las indicaciones o los registros, no dudes en consultarnos.</p>`
+        );
+        break;
+
+      case 'admin_password_recovery':
+        htmlContent = baseTemplate(
+          'Solicitud de recuperación de contraseña',
+          `<h2>Nueva solicitud de recuperación de contraseña</h2>
+           <p>Se ha registrado una solicitud de restablecimiento de contraseña en el sistema.</p>
+           <div class="info-box">
+             ${infoRow('📧 Correo solicitado:', data.recoveryEmail)}
+             ${infoRow('📅 Fecha:', data.date)}
+             ${infoRow('🕒 Hora:', data.time)}
+             ${infoRow('🌐 IP:', data.ip)}
+             ${infoRow('💻 Navegador:', data.browser)}
+             ${infoRow('🖥️ Sistema:', data.os)}
+             ${infoRow('📍 Origen:', data.origin)}
+             ${infoRow('✅ Estado:', data.status)}
+           </div>
+           <p>Este es un aviso automático de seguridad. Si no reconoces esta actividad, revisa el registro de auditoría del sistema.</p>`
+        );
+        break;
+
+      case 'admin_password_recovery_error':
+        htmlContent = baseTemplate(
+          'Error en recuperación de contraseña',
+          `<h2>⚠️ Error al procesar una recuperación de contraseña</h2>
+           <p>Se produjo un error al intentar procesar una solicitud de restablecimiento de contraseña.</p>
+           <div class="info-box">
+             ${infoRow('📧 Correo solicitado:', data.recoveryEmail)}
+             ${infoRow('📅 Fecha:', data.date)}
+             ${infoRow('🕒 Hora:', data.time)}
+             ${infoRow('🌐 IP:', data.ip)}
+             ${infoRow('💻 Navegador:', data.browser)}
+             ${infoRow('🖥️ Sistema:', data.os)}
+             ${infoRow('📍 Origen:', data.origin)}
+             ${infoRow('❌ Estado:', data.status)}
+             ${infoRow('🔎 Detalle:', data.errorDetails)}
+           </div>
+           <p>Este es un aviso automático de seguridad. Revisa la configuración de autenticación si el error persiste.</p>`
+        );
+        break;
+
       case 'reminder':
         htmlContent = baseTemplate(
           'Recordatorio Importante',
@@ -293,15 +360,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       html: htmlContent,
     };
 
-    // Agregar adjuntos si existen (PDF Historial Clínico)
-    if (attachmentBase64) {
+    // Agregar adjuntos si existen. Se soportan dos formatos:
+    //   • attachmentBase64: un PDF del historial completo (flujo "Enviar por Correo").
+    //   • attachments: lista [{ filename, content }] con imágenes/PDF de un registro.
+    // Resend infiere el content-type desde la extensión del filename.
+    const normalizedAttachments: { filename: string; content: string }[] = [];
+    let totalAttachmentLen = 0;
+
+    if (attachmentBase64 !== undefined) {
+      if (typeof attachmentBase64 !== 'string' || attachmentBase64.length > MAX_ATTACHMENT_LEN) {
+        return res.status(400).json({ error: 'Adjunto inválido o demasiado grande' });
+      }
       const safePetName = String(data.petName ?? 'mascota').replace(/[^\w\s.-]/g, '').trim() || 'mascota';
-      emailPayload.attachments = [
-        {
-          filename: `Historial_Clinico_${safePetName}.pdf`,
-          content: attachmentBase64.split(',')[1] || attachmentBase64, // Remove data URI prefix if present
+      normalizedAttachments.push({
+        filename: `Historial_Clinico_${safePetName}.pdf`,
+        content: attachmentBase64.split(',')[1] || attachmentBase64, // Remove data URI prefix if present
+      });
+      totalAttachmentLen += attachmentBase64.length;
+    }
+
+    if (rawAttachments !== undefined) {
+      if (!Array.isArray(rawAttachments) || rawAttachments.length > MAX_ATTACHMENTS_COUNT) {
+        return res.status(400).json({ error: 'Adjuntos inválidos o demasiados archivos' });
+      }
+      for (const att of rawAttachments) {
+        if (!att || typeof att.filename !== 'string' || typeof att.content !== 'string') {
+          return res.status(400).json({ error: 'Formato de adjunto inválido' });
         }
-      ];
+        const content = att.content.split(',')[1] || att.content; // Remove data URI prefix if present
+        totalAttachmentLen += content.length;
+        if (totalAttachmentLen > MAX_ATTACHMENT_LEN) {
+          return res.status(400).json({ error: 'Adjuntos demasiado grandes' });
+        }
+        const safeName = att.filename.replace(/[^\w\s.\-()]/g, '').trim().slice(0, 120) || 'adjunto';
+        normalizedAttachments.push({ filename: safeName, content });
+      }
+    }
+
+    if (normalizedAttachments.length > 0) {
+      emailPayload.attachments = normalizedAttachments;
     }
 
     const { data: resendData, error } = await resend.emails.send(emailPayload);

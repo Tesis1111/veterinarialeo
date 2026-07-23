@@ -30,7 +30,7 @@ import { audit } from "./auditoriaService";
 const COL = "historiales";
 
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif", "application/pdf", "text/plain"];
-const MAX_FILE_SIZE_MB = 5;
+const MAX_FILE_SIZE_MB = 1;
 
 // ── Conversion ──────────────────────────────────────────────────────────────
 

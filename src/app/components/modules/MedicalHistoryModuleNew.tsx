@@ -41,7 +41,7 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
 import { useSuccessPopup } from "../../context/SuccessPopupContext";
-import { sendClinicalHistory, sendReminder } from "../../services/resendService";
+import { sendClinicalHistory, sendClinicalRecordEmail, sendReminder } from "../../services/resendService";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -299,7 +299,7 @@ export default function MedicalHistoryModule() {
       const file = files[i];
       const allowed = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf', 'image/gif'];
       if (!allowed.includes(file.type)) { toast.error(`Tipo no permitido: ${file.name}`); continue; }
-      if (file.size > 10 * 1024 * 1024) { toast.error(`Archivo muy grande: ${file.name}`); continue; }
+      if (file.size > 1 * 1024 * 1024) { toast.error(`El archivo supera el límite de 1 MB: ${file.name}`); continue; }
       const reader = new FileReader();
       reader.onload = (ev) => {
         const att: MedicalAttachment = {
@@ -462,9 +462,28 @@ export default function MedicalHistoryModule() {
         const clientName = getClientName(selectedClientId);
         const petName = getPetName(selectedPetId);
         if (clientEmail) {
-          setTimeout(() => {
-            toast.success(`✉️ Historial enviado a ${clientName} (${clientEmail})`);
-          }, 800);
+          // Adjuntar los archivos/imágenes cargados en este registro.
+          const attachments = uploadedFiles.map(f => ({
+            filename: f.fileName,
+            content: f.fileUrl, // data URI base64; el backend quita el prefijo
+          }));
+          sendClinicalRecordEmail(clientEmail, {
+            clientName,
+            petName,
+            date: format(new Date(addForm.date), "dd/MM/yyyy"),
+            eventType: addForm.eventType,
+            doctorName: getDoctorName(addForm.professionalId),
+            weight: addForm.weight || undefined,
+            temperature: addForm.temperature || undefined,
+            diagnosis: addForm.diagnosis || undefined,
+            treatment: addForm.treatment || undefined,
+            medication: addForm.medication || undefined,
+            description: addForm.description || undefined,
+            notes: addForm.notes || undefined,
+            nextAppointmentDate: proximoRefuerzo ? format(proximoRefuerzo, "dd/MM/yyyy") : undefined,
+          }, attachments)
+            .then(() => toast.success(`✉️ Historial enviado a ${clientName} (${clientEmail})`))
+            .catch(() => toast.warning("El registro se guardó, pero no se pudo enviar el correo al cliente"));
         } else {
           toast.warning("El cliente no tiene email registrado");
         }
@@ -1270,7 +1289,7 @@ export default function MedicalHistoryModule() {
                       <div className="flex flex-col items-center gap-2">
                         <Upload className="h-8 w-8 text-orange-400" />
                         <p className="text-sm text-gray-600 text-center">Radiografías, tomografías, análisis, fotos clínicas</p>
-                        <p className="text-xs text-gray-400">JPG, PNG, PDF, GIF — Máx. 10MB por archivo</p>
+                        <p className="text-xs text-gray-400">JPG, PNG, PDF, GIF — Máx. 1 MB por archivo</p>
                         <Input
                           type="file"
                           accept="image/jpeg,image/png,image/jpg,application/pdf,image/gif"
@@ -1320,10 +1339,10 @@ export default function MedicalHistoryModule() {
                       </div>
                       <div>
                         <p className="text-sm font-medium text-gray-800">
-                          Enviar resumen del historial al cliente por email
+                          Enviar este registro clínico al cliente por email
                         </p>
                         <p className="text-xs text-gray-500 mt-0.5">
-                          Se enviará automáticamente al correo registrado del cliente al guardar este registro.
+                          Al guardar, se enviará al correo registrado del cliente con todos los detalles del registro y las imágenes/archivos adjuntos.
                         </p>
                       </div>
                     </button>
