@@ -41,9 +41,7 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { exportToExcel, exportToPDF } from "../../utils/exportUtils";
 import { useSuccessPopup } from "../../context/SuccessPopupContext";
-import { sendClinicalHistory, sendClinicalRecordEmail, sendReminder } from "../../services/resendService";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import { sendClinicalRecordEmail, sendReminder } from "../../services/resendService";
 
 // Static fallback event types (used when Firebase is not configured)
 const CLINICAL_EVENT_TYPES_FALLBACK = [
@@ -376,6 +374,7 @@ export default function MedicalHistoryModule() {
     // Guardar el dueño vigente al momento del registro
     const currentOwner = clients.find(c => c.id === selectedClientId);
 
+    let saveOk = false;
     try {
       const firestorePayload: Record<string, any> = {
         // Schema matching the MD spec
@@ -415,8 +414,21 @@ export default function MedicalHistoryModule() {
       };
 
       if (FIREBASE_CONFIGURED && db) {
-        await addDoc(collection(db, "historiales"), firestorePayload);
-        // onSnapshot will add it to the list automatically
+        try {
+          await addDoc(collection(db, "historiales"), firestorePayload);
+          // onSnapshot will add it to the list automatically
+        } catch (saveErr: any) {
+          // Un adjunto en base64 grande puede superar el límite de 1 MiB por
+          // documento de Firestore. Reintentamos guardando el registro SIN los
+          // adjuntos para no perder el dato clínico; la imagen igual se envía
+          // por correo (se toma desde memoria, no desde Firestore).
+          if (firestorePayload.attachments?.length) {
+            await addDoc(collection(db, "historiales"), { ...firestorePayload, attachments: [] });
+            toast.warning("El registro se guardó, pero la imagen era demasiado pesada para almacenarla en la ficha; se enviará por correo igualmente.");
+          } else {
+            throw saveErr;
+          }
+        }
       } else {
         // localStorage fallback via service
         const servicePayload: any = {
@@ -440,6 +452,7 @@ export default function MedicalHistoryModule() {
         setRecords(prev => [...prev, newRecord]);
       }
 
+      saveOk = true;
       addLog("Crear", "historiales", `Registro clínico agregado para ${getPetName(selectedPetId)}`);
       toast.success("Registro agregado al historial clínico");
 
@@ -457,17 +470,33 @@ export default function MedicalHistoryModule() {
         }
       }
 
-      if (sendEmail) {
-        const clientEmail = getClientEmail(selectedClientId);
-        const clientName = getClientName(selectedClientId);
-        const petName = getPetName(selectedPetId);
-        if (clientEmail) {
-          // Adjuntar los archivos/imágenes cargados en este registro.
-          const attachments = uploadedFiles.map(f => ({
-            filename: f.fileName,
-            content: f.fileUrl, // data URI base64; el backend quita el prefijo
-          }));
-          sendClinicalRecordEmail(clientEmail, {
+    } catch (err: any) {
+      console.error("[MedicalHistory] Error guardando historial:", err);
+      const msg = err?.code === "permission-denied"
+        ? "Sin permisos. Solo veterinarios y admin pueden registrar historial clínico."
+        : err?.message ?? "Error al guardar el registro. Intente nuevamente.";
+      toast.error(msg);
+    }
+
+    // ── Envío del registro puntual al cliente (todos los datos + imagen) ──
+    // Se ejecuta FUERA del try del guardado: los adjuntos se toman de memoria,
+    // por lo que la imagen llega por correo aunque no haya entrado en Firestore.
+    // El envío se espera (await) y los errores se muestran de verdad, sin
+    // confundirse con errores del guardado.
+    if (saveOk && sendEmail) {
+      const clientEmail = getClientEmail(selectedClientId);
+      const clientName = getClientName(selectedClientId);
+      const petName = getPetName(selectedPetId);
+      if (!clientEmail) {
+        toast.warning("El cliente no tiene email registrado; no se envió el correo.");
+      } else {
+        const attachments = uploadedFiles.map(f => ({
+          filename: f.fileName,
+          content: f.fileUrl, // data URI base64; el backend quita el prefijo
+        }));
+        const toastId = toast.loading(`Enviando registro a ${clientName}...`);
+        try {
+          await sendClinicalRecordEmail(clientEmail, {
             clientName,
             petName,
             date: format(new Date(addForm.date), "dd/MM/yyyy"),
@@ -481,22 +510,18 @@ export default function MedicalHistoryModule() {
             description: addForm.description || undefined,
             notes: addForm.notes || undefined,
             nextAppointmentDate: proximoRefuerzo ? format(proximoRefuerzo, "dd/MM/yyyy") : undefined,
-          }, attachments)
-            .then(() => toast.success(`✉️ Historial enviado a ${clientName} (${clientEmail})`))
-            .catch(() => toast.warning("El registro se guardó, pero no se pudo enviar el correo al cliente"));
-        } else {
-          toast.warning("El cliente no tiene email registrado");
+          }, attachments);
+          toast.success(`✉️ Registro enviado a ${clientName} (${clientEmail})`, { id: toastId });
+        } catch (mailErr: any) {
+          const detail = mailErr?.message ? `: ${mailErr.message}` : "";
+          toast.error(`El registro se guardó, pero no se pudo enviar el correo al cliente${detail}`, { id: toastId });
         }
       }
+    }
 
+    if (saveOk) {
       resetForm();
       setActiveTab("consult");
-    } catch (err: any) {
-      console.error("[MedicalHistory] Error guardando historial:", err);
-      const msg = err?.code === "permission-denied"
-        ? "Sin permisos. Solo veterinarios y admin pueden registrar historial clínico."
-        : err?.message ?? "Error al guardar el registro. Intente nuevamente.";
-      toast.error(msg);
     }
   };
 
@@ -573,54 +598,6 @@ export default function MedicalHistoryModule() {
     );
     addLog("Exportar", "Historial Clínico", `Historial PDF de ${getPetName(selectedPetId)} generado`);
     toast.success("PDF generado — use Ctrl+P para guardar");
-  };
-
-  const handleEmailPDF = () => {
-    if (petHistory.length === 0) { toast.error("No hay historial para exportar"); return; }
-    const petInfo = pets.find(p => p.id === selectedPetId);
-    
-    const doc = new jsPDF();
-    doc.text(`Historial Clínico - ${getPetName(selectedPetId)}`, 14, 15);
-    doc.setFontSize(10);
-    doc.text(`${(petInfo as any)?.species || ""} - ${(petInfo as any)?.race || ""}`, 14, 22);
-    
-    const tableColumn = ["Fecha", "Tipo", "Profesional", "Peso", "Temp.", "Detalle"];
-    const tableRows = petHistory.map(r => [
-      format(new Date(r.date), "dd/MM/yyyy"),
-      r.eventType,
-      getDoctorName(r.professionalId),
-      (r as any).weight ? `${(r as any).weight} kg` : "-",
-      (r as any).temperature ? `${(r as any).temperature}°C` : "-",
-      `${r.description}${(r as any).diagnosis ? ` | Dx: ${(r as any).diagnosis}` : ""}`
-    ]);
-
-    autoTable(doc, {
-      head: [tableColumn],
-      body: tableRows,
-      startY: 30,
-      theme: 'grid',
-      styles: { fontSize: 8 }
-    });
-
-    const pdfBase64 = doc.output('datauristring');
-    
-    // Send email
-    const client = clients.find(c => c.id === (petInfo as any)?.clientId || c.id === (petInfo as any)?.ownerId);
-    if (client?.email) {
-      toast.promise(
-        sendClinicalHistory(client.email, {
-          clientName: client.fullName,
-          petName: getPetName(selectedPetId)
-        }, pdfBase64),
-        {
-          loading: 'Enviando historial por correo...',
-          success: '¡Historial enviado exitosamente!',
-          error: 'Error al enviar el correo'
-        }
-      );
-    } else {
-      toast.error('El cliente no tiene un correo registrado.');
-    }
   };
 
   const handleExportIndividualPDF = (record: any) => {
@@ -831,10 +808,6 @@ export default function MedicalHistoryModule() {
                   <Button variant="outline" className="flex items-center gap-2 border-orange-200 text-orange-700 hover:bg-orange-50" onClick={handleExportPDF}>
                   <FileText className="w-4 h-4" />
                   Descargar PDF
-                </Button>
-                <Button variant="outline" className="flex items-center gap-2 border-blue-200 text-blue-700 hover:bg-blue-50" onClick={handleEmailPDF}>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-mail"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-                  Enviar por Correo
                 </Button>
                   <Button
                     onClick={handleExportExcel}
