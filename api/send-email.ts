@@ -35,6 +35,23 @@ const rateBuckets = new Map<string, { count: number; windowStart: number }>();
 const RATE_WINDOW_MS = 60 * 1000;
 const RATE_MAX_PER_WINDOW = 20;
 
+// Rate limiting por IP (para solicitudes sin sesión)
+const ipRateBuckets = new Map<string, { count: number; windowStart: number }>();
+const IP_RATE_WINDOW_MS = 5 * 60 * 1000; // 5 minutos
+const IP_RATE_MAX_PER_WINDOW = 5; // máximo 5 solicitudes por IP cada 5 minutos
+
+function isRateLimitedByIp(ip: string): boolean {
+  const now = Date.now();
+  const bucket = ipRateBuckets.get(ip);
+  if (!bucket || now - bucket.windowStart > IP_RATE_WINDOW_MS) {
+    ipRateBuckets.set(ip, { count: 1, windowStart: now });
+    return false;
+  }
+  bucket.count += 1;
+  return bucket.count > IP_RATE_MAX_PER_WINDOW;
+}
+
+
 async function verifyIdToken(idToken: string): Promise<string | null> {
   const cached = tokenCache.get(idToken);
   if (cached && cached.expiresAt > Date.now()) return cached.uid;
@@ -123,20 +140,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'Configuración de servidor incompleta (API Key).' });
   }
 
-  // Autenticación: solo usuarios logueados en Firebase pueden enviar correos.
-  const authHeader = req.headers.authorization || '';
-  const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  if (!idToken) {
-    return res.status(401).json({ error: 'No autenticado' });
-  }
-  const uid = await verifyIdToken(idToken);
-  if (!uid) {
-    return res.status(401).json({ error: 'Token inválido o expirado' });
-  }
-  if (isRateLimited(uid)) {
-    return res.status(429).json({ error: 'Demasiados correos, intente en un minuto' });
-  }
-
   try {
     const { to, subject, type, data = {}, attachmentBase64 } = req.body;
 
@@ -148,6 +151,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (typeof subject !== 'string' || subject.length > MAX_SUBJECT_LEN) {
       return res.status(400).json({ error: 'Asunto inválido' });
+    }
+
+    const isAdminRecovery = type === 'admin_password_recovery' || type === 'admin_password_recovery_error';
+
+    if (isAdminRecovery) {
+      // Validar estrictamente el destinatario administrador para evitar abusos
+      const allowedAdmins = ['ferreyraemanuel19@gmail.com', 'admin@veterinaria-leo.com'];
+      if (!allowedAdmins.includes(to)) {
+        return res.status(403).json({ error: 'Destinatario no autorizado para este tipo de correo administrativo' });
+      }
+
+      // Rate limit por IP
+      const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+      const ipStr = Array.isArray(ip) ? ip[0] : String(ip);
+      if (isRateLimitedByIp(ipStr)) {
+        return res.status(429).json({ error: 'Demasiadas solicitudes de recuperación. Intente en unos minutos.' });
+      }
+    } else {
+      // Autenticación: solo usuarios logueados en Firebase pueden enviar correos.
+      const authHeader = req.headers.authorization || '';
+      const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+      if (!idToken) {
+        return res.status(401).json({ error: 'No autenticado' });
+      }
+      const uid = await verifyIdToken(idToken);
+      if (!uid) {
+        return res.status(401).json({ error: 'Token inválido o expirado' });
+      }
+      if (isRateLimited(uid)) {
+        return res.status(429).json({ error: 'Demasiados correos, intente en un minuto' });
+      }
     }
     if (attachmentBase64 !== undefined &&
         (typeof attachmentBase64 !== 'string' || attachmentBase64.length > MAX_ATTACHMENT_LEN)) {

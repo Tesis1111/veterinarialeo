@@ -20,12 +20,19 @@ async function sendEmailAndLog(payload: EmailLogData) {
     return { success: true, id: null, skipped: 'dev' };
   }
 
-  // El endpoint exige sesión de Firebase (Authorization: Bearer <idToken>).
-  const currentUser = auth?.currentUser;
-  if (!currentUser) {
-    throw new Error('Se requiere una sesión activa para enviar correos.');
+  const isRecovery = payload.type === 'admin_password_recovery' || payload.type === 'admin_password_recovery_error';
+  let idToken = '';
+  let userId = 'No autenticado';
+
+  if (!isRecovery) {
+    // El endpoint exige sesión de Firebase (Authorization: Bearer <idToken>).
+    const currentUser = auth?.currentUser;
+    if (!currentUser) {
+      throw new Error('Se requiere una sesión activa para enviar correos.');
+    }
+    idToken = await currentUser.getIdToken();
+    userId = currentUser.uid;
   }
-  const idToken = await currentUser.getIdToken();
 
   // El log en Firestore es "best effort": si falla, NO debe hacer fallar un
   // correo que sí se envió. Las reglas exigen userId == uid del autenticado.
@@ -40,7 +47,7 @@ async function sendEmailAndLog(payload: EmailLogData) {
         estado,
         id_resend: idResend,
         mensaje_error: mensajeError,
-        userId: currentUser.uid,
+        userId: userId,
       });
     } catch (e) {
       console.error('No se pudo registrar el log de email en Firebase', e);
@@ -49,12 +56,16 @@ async function sendEmailAndLog(payload: EmailLogData) {
 
   try {
     // 1. Llamar a nuestra Serverless Function
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (idToken) {
+      headers['Authorization'] = `Bearer ${idToken}`;
+    }
+
     const response = await fetch('/api/send-email', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${idToken}`,
-      },
+      headers,
       body: JSON.stringify(payload),
     });
 
@@ -169,6 +180,33 @@ export const sendReminder = async (
     to,
     subject: `Recordatorio: ${data.reminderType} para ${data.petName} 🔔`,
     type: 'reminder',
+    data,
+  });
+};
+
+export const sendAdminPasswordRecoveryNotification = async (
+  to: string,
+  data: {
+    recoveryEmail: string;
+    date: string;
+    time: string;
+    ip: string;
+    browser: string;
+    os: string;
+    origin: string;
+    status: string;
+    errorDetails?: string;
+  }
+) => {
+  const isError = data.status.toLowerCase().includes("error") || !!data.errorDetails;
+  const subject = isError 
+    ? "Error en recuperación de contraseña ⚠️" 
+    : "Solicitud de recuperación de contraseña 🔒";
+  
+  return sendEmailAndLog({
+    to,
+    subject,
+    type: isError ? "admin_password_recovery_error" : "admin_password_recovery",
     data,
   });
 };
