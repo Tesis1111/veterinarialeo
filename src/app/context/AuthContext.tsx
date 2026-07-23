@@ -10,6 +10,8 @@ import {
   signOut,
   onAuthStateChanged,
   updateProfile,
+  setPersistence,
+  browserSessionPersistence,
   type User as FirebaseUser,
 } from "firebase/auth";
 import {
@@ -179,6 +181,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
+      // Persistencia de SESIÓN: la sesión se descarta al cerrar la pestaña/el
+      // navegador, obligando a iniciar sesión de nuevo. Un refresh de la misma
+      // pestaña la mantiene (sessionStorage sobrevive al recargar, no al cerrar).
+      await setPersistence(auth, browserSessionPersistence);
       const cred = await signInWithEmailAndPassword(auth, email, password);
       let appUser = await loadUserFromFirestore(cred.user);
 
