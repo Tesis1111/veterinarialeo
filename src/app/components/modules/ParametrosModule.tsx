@@ -76,7 +76,7 @@ export default function ParametrosModule() {
 
   // ── Tipos de Servicio state ─────────────────────────────────────────────────
   const [tiposServicio, setTiposServicio] = useState<TipoServicioParametro[]>([]);
-  const [servicioForm, setServicioForm] = useState({ name: "", color: "bg-blue-100 text-blue-800", description: "" });
+  const [servicioForm, setServicioForm] = useState({ name: "", color: "bg-blue-100 text-blue-800", description: "", profesion: "" });
   const [editingServicio, setEditingServicio] = useState<TipoServicioParametro | null>(null);
   const [servicioDialogOpen, setServicioDialogOpen] = useState(false);
   const [deleteServicioId, setDeleteServicioId] = useState<string | null>(null);
@@ -331,22 +331,22 @@ export default function ParametrosModule() {
   // ── TIPOS DE SERVICIO — handlers ────────────────────────────────────────────
   const openNewServicio = () => {
     setEditingServicio(null);
-    setServicioForm({ name: "", color: "bg-blue-100 text-blue-800", description: "" });
+    setServicioForm({ name: "", color: "bg-blue-100 text-blue-800", description: "", profesion: "" });
     setServicioDialogOpen(true);
   };
   const openEditServicio = (s: TipoServicioParametro) => {
     setEditingServicio(s);
-    setServicioForm({ name: s.name, color: s.color || "bg-blue-100 text-blue-800", description: s.description ?? "" });
+    setServicioForm({ name: s.name, color: s.color || "bg-blue-100 text-blue-800", description: s.description ?? "", profesion: s.profesion ?? "" });
     setServicioDialogOpen(true);
   };
   const handleSaveServicio = async () => {
     if (!servicioForm.name.trim()) { toast.error("El nombre es obligatorio"); return; }
     try {
       if (editingServicio) {
-        await modificarTipoServicio(editingServicio.id, { name: servicioForm.name.trim(), color: servicioForm.color, description: servicioForm.description ?? "" });
+        await modificarTipoServicio(editingServicio.id, { name: servicioForm.name.trim(), color: servicioForm.color, description: servicioForm.description ?? "", profesion: servicioForm.profesion ?? "" });
         showSuccess("Tipo de servicio actualizado");
       } else {
-        await registrarTipoServicio({ name: servicioForm.name.trim(), color: servicioForm.color, description: servicioForm.description ?? "", active: true }, user!.id);
+        await registrarTipoServicio({ name: servicioForm.name.trim(), color: servicioForm.color, description: servicioForm.description ?? "", profesion: servicioForm.profesion ?? "", active: true }, user!.id);
         showSuccess("Tipo de servicio creado");
       }
       setServicioDialogOpen(false);
@@ -959,6 +959,25 @@ export default function ParametrosModule() {
                   <SelectItem value="bg-gray-100 text-gray-800"><span className="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-800 font-medium">Gris</span></SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Profesión requerida (opcional)</Label>
+              <Select
+                value={servicioForm.profesion || "__none__"}
+                onValueChange={v => setServicioForm(p => ({ ...p, profesion: v === "__none__" ? "" : v }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Cualquier profesional" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Cualquier profesional</SelectItem>
+                  {profesiones.map(p => (
+                    <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-400">
+                Al agendar, solo se ofrecerán profesionales con esta profesión. Si se deja en
+                «Cualquier profesional», aparecerán todos.
+              </p>
             </div>
             <div className="space-y-2">
               <Label>Descripción (opcional)</Label>

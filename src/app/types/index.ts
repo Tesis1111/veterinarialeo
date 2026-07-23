@@ -798,6 +798,12 @@ export interface TipoServicioParametro {
   name: string;
   color?: string;
   description?: string;
+  /**
+   * Profesión requerida para atender este servicio (nombre, de Parámetros → Profesiones).
+   * Se guarda el NOMBRE para matchear directo contra `Doctor.profesion`. Opcional:
+   * si está vacío, cualquier profesional puede tomar el turno.
+   */
+  profesion?: string;
   active: boolean;
   createdAt: Date;
   updatedAt?: Date;

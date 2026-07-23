@@ -356,6 +356,25 @@ export default function AppointmentsModule() {
     [formData.doctorId, formData.date, doctorSchedules]
   );
 
+  // Profesión requerida por el tipo de servicio elegido (si el admin la configuró).
+  const profesionRequerida = useMemo(() => {
+    const svc = tiposServicio.find(
+      t => t.id === formData.type || t.name.toLowerCase() === String(formData.type).toLowerCase()
+    );
+    return (svc?.profesion ?? "").trim();
+  }, [tiposServicio, formData.type]);
+
+  // Profesionales ofrecidos para el servicio: si hay profesión requerida, solo los que
+  // la tienen; si no, todos. El profesional ya elegido (edición) siempre se incluye para
+  // no romper turnos existentes con datos legados.
+  const doctoresParaServicio = useMemo(() => {
+    if (!profesionRequerida) return doctoresPerfil;
+    const req = profesionRequerida.toLowerCase();
+    return doctoresPerfil.filter(
+      d => (d.profesion ?? "").trim().toLowerCase() === req || d.id === formData.doctorId
+    );
+  }, [doctoresPerfil, profesionRequerida, formData.doctorId]);
+
   const isTimeSlotAvailable = (time: string, doctorId: string): boolean =>
     !appointmentsForDate.some(apt => apt.startTime === time && apt.doctorId === doctorId && apt.id !== selectedAppointment?.id);
 
@@ -810,7 +829,11 @@ export default function AppointmentsModule() {
                     <Label>Tipo de Servicio <span className="text-red-500">*</span></Label>
                     <Select
                       value={formData.type}
-                      onValueChange={(value: AppointmentType) => setFormData(prev => ({ ...prev, type: value }))}
+                      onValueChange={(value: AppointmentType) => setFormData(prev => (
+                        // Al cambiar el servicio cambia la profesión requerida: se reinicia
+                        // el profesional y el horario para no dejar una selección inválida.
+                        value === prev.type ? prev : { ...prev, type: value, doctorId: "", startTime: "" }
+                      ))}
                     >
                       <SelectTrigger><SelectValue placeholder="Seleccione un servicio" /></SelectTrigger>
                       <SelectContent>
@@ -933,13 +956,22 @@ export default function AppointmentsModule() {
                               <br />
                               <span className="text-xs">Registre uno desde Seguridad.</span>
                             </div>
-                          ) : doctoresPerfil.map(d => (
+                          ) : doctoresParaServicio.length === 0 ? (
+                            <div className="px-3 py-4 text-sm text-gray-500 text-center">
+                              No hay profesionales con la profesión «{profesionRequerida}».
+                              <br />
+                              <span className="text-xs">Asigne esa profesión a un profesional desde Seguridad, o cambie la profesión requerida del servicio en Parámetros.</span>
+                            </div>
+                          ) : doctoresParaServicio.map(d => (
                             <SelectItem key={d.id} value={d.id}>
                               {d.fullName}{d.profesion ? ` — ${d.profesion}` : ""}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
+                      {profesionRequerida && doctoresParaServicio.length > 0 && (
+                        <p className="text-xs text-gray-400">Filtrado por profesión: {profesionRequerida}</p>
+                      )}
                     </div>
 
                     <div className="space-y-2">

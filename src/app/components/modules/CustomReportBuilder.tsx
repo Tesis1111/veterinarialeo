@@ -51,7 +51,7 @@ export default function CustomReportBuilder({ clients, pets, medicalRecords, app
           client_phone: client.phone || "N/A",
           pet_name: pet.name || "N/A",
           pet_species: pet.species || "N/A",
-          pet_breed: pet.breed || "N/A",
+          pet_breed: pet.race || pet.breed || "N/A",
           pet_sex: pet.sex || "N/A",
           pet_status: pet.deceased ? "Baja" : "Viva",
           record_date: "N/A",
@@ -69,7 +69,7 @@ export default function CustomReportBuilder({ clients, pets, medicalRecords, app
           client_phone: client.phone || "N/A",
           pet_name: pet.name || "N/A",
           pet_species: pet.species || "N/A",
-          pet_breed: pet.breed || "N/A",
+          pet_breed: pet.race || pet.breed || "N/A",
           pet_sex: pet.sex || "N/A",
           pet_status: pet.deceased ? "Baja" : "Viva",
           record_date: record.date ? format(new Date(record.date), "dd/MM/yyyy") : "N/A",
@@ -80,7 +80,13 @@ export default function CustomReportBuilder({ clients, pets, medicalRecords, app
     }
   }, [baseEntity, clients, pets, medicalRecords]);
 
-  const activeCols = AVAILABLE_COLUMNS.filter(c => selectedColumns.includes(c.id));
+  // Con la entidad "Mascotas" no hay una atención única por fila: las columnas de
+  // Historial no aplican, así que se ocultan para no mostrar N/A confuso.
+  const visibleColumns = baseEntity === "pets"
+    ? AVAILABLE_COLUMNS.filter(c => c.entity !== "record")
+    : AVAILABLE_COLUMNS;
+
+  const activeCols = visibleColumns.filter(c => selectedColumns.includes(c.id));
 
   const handleExport = () => {
     if (activeCols.length === 0) {
@@ -137,7 +143,7 @@ export default function CustomReportBuilder({ clients, pets, medicalRecords, app
             <div className="space-y-3">
               <Label className="text-indigo-800 font-semibold">2. Seleccionar Columnas</Label>
               <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                {AVAILABLE_COLUMNS.map(col => (
+                {visibleColumns.map(col => (
                   <div key={col.id} className="flex items-center space-x-2">
                     <Checkbox 
                       id={`col-${col.id}`} 

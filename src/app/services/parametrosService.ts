@@ -70,7 +70,7 @@ function toVacuna(id: string, d: any): VacunaParametro {
   return { id, especieId: d.especieId ?? "", especieName: d.especieName, nombreVacuna: d.nombreVacuna ?? "", dosis: d.dosis ?? 1, periodicidadDias: d.periodicidadDias ?? 365, descripcion: d.descripcion, active: d.active !== false, createdAt: ts2date(d.createdAt), updatedAt: d.updatedAt ? ts2date(d.updatedAt) : undefined, createdBy: d.createdBy };
 }
 function toTipoServicio(id: string, d: any): TipoServicioParametro {
-  return { id, name: d.name ?? "", color: d.color, description: d.description, active: d.active !== false, createdAt: ts2date(d.createdAt), updatedAt: d.updatedAt ? ts2date(d.updatedAt) : undefined, createdBy: d.createdBy };
+  return { id, name: d.name ?? "", color: d.color, description: d.description, profesion: d.profesion ?? "", active: d.active !== false, createdAt: ts2date(d.createdAt), updatedAt: d.updatedAt ? ts2date(d.updatedAt) : undefined, createdBy: d.createdBy };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -399,6 +399,31 @@ export function suscribirTiposServicio(
       callback(data);
     }, (err) => {
       logger.warn("[parametrosService] onSnapshot tiposServicio error:", err);
+      onError?.(err as Error);
+      callback([]);
+    });
+  }
+  callback([]);
+  return () => {};
+}
+
+/**
+ * Suscribe a TODOS los tipos de servicio, incluidos los inactivos (dados de baja).
+ * Se usa solo para resolución de nombres (ej. gráficos históricos): un turno puede
+ * referenciar un tipo de servicio que luego fue desactivado, y no debe mostrarse el
+ * ID crudo. Para selectores de alta usar `suscribirTiposServicio` (solo activos).
+ */
+export function suscribirTodosTiposServicio(
+  callback: (items: TipoServicioParametro[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe | (() => void) {
+  if (FIREBASE_CONFIGURED && db) {
+    return onSnapshot(collection(db, "tiposServicio"), (snap) => {
+      const data = snap.docs.map(d => toTipoServicio(d.id, d.data()));
+      data.sort((a, b) => a.name.localeCompare(b.name, "es"));
+      callback(data);
+    }, (err) => {
+      logger.warn("[parametrosService] onSnapshot todos tiposServicio error:", err);
       onError?.(err as Error);
       callback([]);
     });

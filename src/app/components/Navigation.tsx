@@ -189,7 +189,7 @@ export default function Navigation({ activeModule, setActiveModule }: Navigation
                     <div className="flex-1">
                       <p className="font-medium text-gray-800">{user?.fullName}</p>
                       {user?.roleName && ROLE_META[user.roleName] ? (
-                        <Badge className={`${ROLE_META[user.roleName].bgColor} mt-1 border`}>
+                        <Badge className={`${ROLE_META[user.roleName].bgColor} ${ROLE_META[user.roleName].color} mt-1 border`}>
                           {ROLE_META[user.roleName].displayName}
                         </Badge>
                       ) : (

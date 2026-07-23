@@ -23,7 +23,7 @@ import { es } from "date-fns/locale";
 import { toast } from "sonner";
 import { exportToPDF, exportToExcel } from "../../utils/exportUtils";
 import CustomReportBuilder from "./CustomReportBuilder";
-import { suscribirRazas, suscribirTiposServicio } from "../../services/parametrosService";
+import { suscribirRazas, suscribirTodosTiposServicio } from "../../services/parametrosService";
 
 const COLORS = [
   "#f97316","#fb923c","#fdba74","#fed7aa",
@@ -127,7 +127,9 @@ export default function ReportsModule({ externalClients, externalPets }: Reports
       }).catch(() => {})
     ));
     unsubs.push(suscribirRazas(setRazas));
-    unsubs.push(suscribirTiposServicio(setTiposServicio));
+    // Lista COMPLETA (incluye inactivos) → nunca mostramos el ID crudo de un
+    // tipo de servicio dado de baja en los gráficos históricos.
+    unsubs.push(suscribirTodosTiposServicio(setTiposServicio));
 
     return () => { unsubs.forEach(u => u()); };
   }, []);
@@ -311,7 +313,12 @@ export default function ReportsModule({ externalClients, externalPets }: Reports
     return Array.from(typeMap.entries())
       .map(([typeId, count]) => {
         const dynType = tiposServicio.find(t => t.id === typeId || t.name.toLowerCase() === typeId.toLowerCase());
-        const name = dynType ? dynType.name : (typeId === "clinic" ? "Clínica Veterinaria" : typeId === "grooming" ? "Peluquería Canina" : typeId === "daycare" ? "Guardería" : typeId);
+        const name = dynType
+          ? dynType.name
+          : typeId === "clinic" ? "Clínica Veterinaria"
+          : typeId === "grooming" ? "Peluquería Canina"
+          : typeId === "daycare" ? "Guardería"
+          : "Servicio eliminado";
         return { name, value: count, percentage: ((count / total) * 100).toFixed(1) };
       })
       .sort((a, b) => b.value - a.value);
