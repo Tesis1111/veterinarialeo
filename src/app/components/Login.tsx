@@ -211,10 +211,47 @@ export default function Login() {
 
     try {
       if (FIREBASE_CONFIGURED && auth) {
+        // El ÚNICO fallo que cuenta como "error de recuperación" es el de
+        // Firebase Auth. La auditoría en Firestore es best-effort: un usuario
+        // NO autenticado no tiene permiso de escritura en /auditoria, y ese
+        // `permission-denied` NO debe reportarse como si el correo de reseteo
+        // hubiese fallado (antes contaminaba el resultado y generaba un email
+        // de error falso, aunque el reseteo sí se enviaba correctamente).
+        let recoverySucceeded = true;
+        let errorDetails = "";
         try {
           // Enviar el correo oficial de Firebase (Paso 3)
           await sendPasswordResetEmail(auth, formattedEmail);
+        } catch (fbErr: any) {
+          console.error("Firebase Auth Error:", fbErr);
+          // 'auth/user-not-found' se trata igual que un éxito de cara al
+          // usuario (no revelar si la cuenta existe).
+          if (fbErr.code !== "auth/user-not-found") {
+            recoverySucceeded = false;
+            errorDetails = `Firebase returned ${fbErr.code || "INTERNAL_ERROR"}: ${fbErr.message || "Error desconocido"}`;
+          }
+        }
 
+        // Auditoría best-effort: su fallo nunca interrumpe ni altera el
+        // resultado de la recuperación.
+        const logRecoveryAudit = async (resultado: string) => {
+          try {
+            await registrarAuditoria({
+              userId: "No autenticado",
+              userName: "No autenticado",
+              userRole: "Invitado",
+              action: "Solicitud recuperación de contraseña",
+              module: "Login",
+              details: `Correo: ${formattedEmail} | IP: ${clientIp} | SO: ${uaInfo.os} | Navegador: ${uaInfo.browser} | Origen: Login | Resultado: ${resultado}`,
+              ipAddress: clientIp,
+              userAgent: navigator.userAgent
+            });
+          } catch (auditErr) {
+            console.warn("Auditoría de recuperación no registrada (best-effort):", auditErr);
+          }
+        };
+
+        if (recoverySucceeded) {
           // Notificación de éxito al administrador (Paso 5)
           sendAdminPasswordRecoveryNotification("ferreyraemanuel19@gmail.com", {
             recoveryEmail: formattedEmail,
@@ -226,77 +263,21 @@ export default function Login() {
             origin: "Pantalla Login",
             status: "Solicitud enviada a Firebase correctamente."
           }).catch(console.error);
-
-          // Registro de éxito en Auditoría (Paso 6)
-          await registrarAuditoria({
-            userId: "No autenticado",
-            userName: "No autenticado",
-            userRole: "Invitado",
-            action: "Solicitud recuperación de contraseña",
-            module: "Login",
-            details: `Correo: ${formattedEmail} | IP: ${clientIp} | SO: ${uaInfo.os} | Navegador: ${uaInfo.browser} | Origen: Login | Resultado: Solicitud enviada correctamente`,
-            ipAddress: clientIp,
-            userAgent: navigator.userAgent
-          });
-
-        } catch (fbErr: any) {
-          console.error("Firebase Auth Error:", fbErr);
-
-          // Si el error es 'auth/user-not-found', actuamos de la misma forma al cliente
-          // por seguridad, pero registramos y notificamos
-          if (fbErr.code === "auth/user-not-found") {
-            // Notificar éxito al admin (Firebase procesó la solicitud)
-            sendAdminPasswordRecoveryNotification("ferreyraemanuel19@gmail.com", {
-              recoveryEmail: formattedEmail,
-              date: dateStr,
-              time: timeStr,
-              ip: clientIp,
-              browser: uaInfo.browser,
-              os: uaInfo.os,
-              origin: "Pantalla Login",
-              status: "Solicitud enviada a Firebase correctamente."
-            }).catch(console.error);
-
-            // Registro en Auditoría
-            await registrarAuditoria({
-              userId: "No autenticado",
-              userName: "No autenticado",
-              userRole: "Invitado",
-              action: "Solicitud recuperación de contraseña",
-              module: "Login",
-              details: `Correo: ${formattedEmail} | IP: ${clientIp} | SO: ${uaInfo.os} | Navegador: ${uaInfo.browser} | Origen: Login | Resultado: Solicitud enviada correctamente`,
-              ipAddress: clientIp,
-              userAgent: navigator.userAgent
-            });
-          } else {
-            // Error real e interno (Paso 7)
-            const errorDetails = `Firebase returned ${fbErr.code || "INTERNAL_ERROR"}: ${fbErr.message || "Error desconocido"}`;
-            
-            // Notificar error al admin
-            sendAdminPasswordRecoveryNotification("ferreyraemanuel19@gmail.com", {
-              recoveryEmail: formattedEmail,
-              date: dateStr,
-              time: timeStr,
-              ip: clientIp,
-              browser: uaInfo.browser,
-              os: uaInfo.os,
-              origin: "Pantalla Login",
-              status: "Error al enviar correo de recuperación.",
-              errorDetails: errorDetails
-            }).catch(console.error);
-
-            // Registrar error en Auditoría
-            await registrarAuditoria({
-              userId: "No autenticado",
-              userName: "No autenticado",
-              userRole: "Invitado",
-              action: "Solicitud recuperación de contraseña",
-              module: "Login",
-              details: `Correo: ${formattedEmail} | IP: ${clientIp} | SO: ${uaInfo.os} | Navegador: ${uaInfo.browser} | Origen: Login | Resultado: Error al enviar correo de recuperación. Detalle: ${fbErr.code || "INTERNAL_ERROR"}`,
-              ipAddress: clientIp,
-              userAgent: navigator.userAgent
-            });
-          }
+          await logRecoveryAudit("Solicitud enviada correctamente");
+        } else {
+          // Error real e interno (Paso 7)
+          sendAdminPasswordRecoveryNotification("ferreyraemanuel19@gmail.com", {
+            recoveryEmail: formattedEmail,
+            date: dateStr,
+            time: timeStr,
+            ip: clientIp,
+            browser: uaInfo.browser,
+            os: uaInfo.os,
+            origin: "Pantalla Login",
+            status: "Error al enviar correo de recuperación.",
+            errorDetails
+          }).catch(console.error);
+          await logRecoveryAudit(`Error al enviar correo de recuperación. Detalle: ${errorDetails}`);
         }
 
         // Siempre mostrar exactamente el mismo mensaje al usuario (Paso 4)
